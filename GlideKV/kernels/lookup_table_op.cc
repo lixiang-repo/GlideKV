@@ -21,6 +21,18 @@ limitations under the License.
 #include <utility>
 #include <chrono>
 #include <atomic>
+#include <random>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <fstream>
+#include <sstream>
+#include <iostream>
+#include <iomanip>
+#include <sys/sysinfo.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/types.h"
@@ -30,10 +42,11 @@ limitations under the License.
 #include "tensorflow/core/lib/hash/hash.h"
 #include "tensorflow/core/platform/random.h"
 #include "tensorflow/core/framework/tensor.h"
-#include <iostream>
 #include "tensorflow/core/util/work_sharder.h"
+
 #include "aerospike_reader.h"
 #include "glidekv_prometheus_metrics.h"
+#include "lookup_interface_stub.h"
 
 namespace tensorflow {
 namespace lookup {
@@ -41,7 +54,7 @@ namespace lookup {
 // Lookup table that wraps an unordered_map. Behaves identical to
 // HashTableOfTensors except that each value must be a vector.
 template <class K, class V>
-class HashTableOfTensors final : public LookupInterface {
+class HashTableOfTensors final : public LookupInterfaceStub {
  public:
   HashTableOfTensors(OpKernelContext* ctx, OpKernel* kernel) {
     OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "value_shape", &value_shape_));
@@ -50,29 +63,35 @@ class HashTableOfTensors final : public LookupInterface {
         errors::InvalidArgument("Default value must be a vector, got shape ",
                                 value_shape_.DebugString()));
 
-    std::cout << "=== Aerospike Vector Reader ===" << std::endl;
+    std::cout << "=== Aerospike Vector Reader with System Monitoring ===" << std::endl;
 
-    // 初始化 GlideKV Prometheus metrics
+    // 初始化 GlideKV Prometheus metrics - 优雅处理端口冲突
+    // 注意：SystemMonitor 会在 Prometheus 指标初始化时自动启动
     InitializeGlideKVPrometheusMetrics("127.0.0.1:8080");
-    PrintPrometheusMetricsConfig();
 
     // AerospikeReader 初始化 - 使用智能指针
     reader_ = std::make_unique<AerospikeReader<K, V>>();
     reader_->init();
+
+    std::cout << "HashTableOfTensors initialized!" << std::endl;
     
   }
 
   Status Find(OpKernelContext* ctx, const Tensor& key, Tensor* value,
               const Tensor& default_value) override {
+    // 记录操作开始时间
     auto start_time = std::chrono::high_resolution_clock::now();
+    double random_value = ThreadLocalRandomGenerator::GetRandomValue();
     
+    auto value_flat = value->flat_inner_dims<V, 2>();
+
     // 增加操作计数
-    GLIDEKV_METRIC_INCREMENT(LOOKUP_OPS_TOTAL);
+    GLIDEKV_METRIC_INCREMENT(LOOKUP_OPS_TOTAL, random_value);
     
     if (!reader_->connected_) {
         std::cerr << "Not connected to Aerospike" << std::endl;
         // 记录连接失败计数
-        GLIDEKV_METRIC_INCREMENT(CONNECTION_FAILURES_TOTAL);
+        GLIDEKV_METRIC_INCREMENT(CONNECTION_FAILURES_TOTAL, random_value);
         return OkStatus();
     }
     
@@ -81,9 +100,6 @@ class HashTableOfTensors final : public LookupInterface {
     if (num_keys == 0) {
         return OkStatus();
     }
-    
-    // 记录批量大小
-    GLIDEKV_METRIC_OBSERVE(BATCH_SIZE, num_keys);
     
     // 创建批量读取记录
     as_batch_records records;
@@ -105,41 +121,47 @@ class HashTableOfTensors final : public LookupInterface {
     
     // 执行批量读取
     as_error err;
-    auto batch_read_start = std::chrono::high_resolution_clock::now();
+    auto lookup_start = std::chrono::high_resolution_clock::now();
     if (aerospike_batch_read(&reader_->as_, &err, NULL, &records) != AEROSPIKE_OK) {
         std::cerr << "Batch read failed: " << err.message << std::endl;
         as_batch_records_destroy(&records);
         // 记录批量读取失败
-        GLIDEKV_METRIC_INCREMENT(BATCH_READ_FAILURES_TOTAL);
+        GLIDEKV_METRIC_INCREMENT(LOOKUP_FAILURES_TOTAL, random_value);
         return OkStatus();
     }
     
     // 记录批量读取延迟
-    auto batch_read_end = std::chrono::high_resolution_clock::now();
-    auto batch_read_duration = std::chrono::duration_cast<std::chrono::microseconds>(batch_read_end - batch_read_start);
-    GLIDEKV_METRIC_OBSERVE(BATCH_READ_LATENCY_US, batch_read_duration.count());
+    auto lookup_end = std::chrono::high_resolution_clock::now();
+    auto lookup_duration = std::chrono::duration_cast<std::chrono::microseconds>(lookup_end - lookup_start);
+    double lookup_latency_ms = lookup_duration.count() / 1000.0;
+    GLIDEKV_METRIC_INCREMENT_BY(LOOKUP_LATENCY_MS, lookup_latency_ms, random_value);
+    GLIDEKV_METRIC_HISTOGRAM_OBSERVE(LOOKUP_LATENCY_HISTOGRAM, lookup_latency_ms, random_value);
     
     // 处理批量读取结果
     as_vector* list = &records.list;
     
-    // 统计成功和失败的记录数
-    int64_t success_count = 0;
+    // 统计失败的记录数
     int64_t failure_count = 0;
 
     auto& worker_threads = *ctx->device()->tensorflow_cpu_worker_threads();
     uint32_t num_worker_threads = worker_threads.num_threads;
+    
     auto shard = [&](uint32_t begin, uint32_t end) {
       for (uint32_t i = begin; i < end; ++i) {
         as_batch_read_record* record = (as_batch_read_record*)as_vector_get(list, i);
+        if (!record) {
+            // 原子递增失败计数
+            __sync_fetch_and_add(&failure_count, 1);
+            continue;
+        }
+        
         const int64_t key_val = as_integer_getorelse((as_integer*)record->key.valuep, -1);
         
         if (record->result == AEROSPIKE_OK) {
             auto it = key_to_idx.find(key_val);
             if (it != key_to_idx.end()) {
                 const size_t idx = it->second;
-                reader_->extract_vector_from_record(&record->record, idx, value);
-                // 原子递增成功计数
-                __sync_fetch_and_add(&success_count, 1);
+                reader_->extract_vector_from_record(&record->record, idx, value_flat);
             }
         } else {
             // 原子递增失败计数
@@ -150,48 +172,25 @@ class HashTableOfTensors final : public LookupInterface {
     int64 slices = static_cast<int64>(num_keys / worker_threads.num_threads) + 1;
     Shard(num_worker_threads, worker_threads.workers, num_keys, slices, shard);
     
-    // 记录成功和失败计数
-    GLIDEKV_METRIC_INCREMENT_BY(KEYS_FOUND_TOTAL, success_count);
-    GLIDEKV_METRIC_INCREMENT_BY(KEYS_NOT_FOUND_TOTAL, failure_count);
+    // 计算并记录失败率
+    // 记录总keys数量
+    GLIDEKV_METRIC_INCREMENT_BY(TOTAL_KEYS, num_keys, random_value);
     
-    // 计算并记录成功率
-    if (num_keys > 0) {
-        double success_rate = static_cast<double>(success_count) / num_keys;
-        GLIDEKV_METRIC_OBSERVE(SUCCESS_RATE, success_rate);
+    // 记录失败keys数量
+    if (failure_count > 0) {
+        GLIDEKV_METRIC_INCREMENT_BY(FAILED_KEYS, failure_count, random_value);
     }
-    
+
     // 清理资源
     as_batch_records_destroy(&records);
     
     // 记录总操作延迟
     auto end_time = std::chrono::high_resolution_clock::now();
     auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
-    GLIDEKV_METRIC_OBSERVE(TOTAL_LATENCY_US, total_duration.count());
+    double total_latency_ms = total_duration.count() / 1000.0;
+    GLIDEKV_METRIC_INCREMENT_BY(TOTAL_LATENCY_MS, total_latency_ms, random_value);
+    GLIDEKV_METRIC_HISTOGRAM_OBSERVE(TOTAL_LATENCY_HISTOGRAM, total_latency_ms, random_value);
     
-    return OkStatus();
-  }
-
-  size_t size() const override {return 0;}
-
-  Status DoInsert(bool clear, const Tensor& keys, const Tensor& values) {
-    return OkStatus();
-  }
-
-  Status Insert(OpKernelContext* ctx, const Tensor& keys,
-                const Tensor& values) override {
-    return DoInsert(false, keys, values);
-  }
-
-  Status Remove(OpKernelContext* ctx, const Tensor& keys) override {
-    return OkStatus();
-  }
-
-  Status ImportValues(OpKernelContext* ctx, const Tensor& keys,
-                      const Tensor& values) override {
-    return DoInsert(true, keys, values);
-  }
-
-  Status ExportValues(OpKernelContext* ctx) override {
     return OkStatus();
   }
 
@@ -203,19 +202,9 @@ class HashTableOfTensors final : public LookupInterface {
 
   TensorShape value_shape() const override { return value_shape_; }
 
-  int64_t MemoryUsed() const override {
-    return 0;
-  }
-
  private:
-  // Writes all keys and values into `keys` and `values`. `keys` and `values`
-  // must point to tensors of size `table_.size()`.
-  
   TensorShape value_shape_;
-  // typedef gtl::InlinedVector<V, 4> ValueArray;
-  // 使用智能指针管理AerospikeReader，避免内存泄漏
   std::unique_ptr<AerospikeReader<K, V>> reader_;
-
 };
 
 }  // namespace lookup
@@ -265,6 +254,15 @@ class LookupTableFindOp : public LookupTableOpKernel {
     output_shape.AppendShape(table->value_shape());
     Tensor* out;
     OP_REQUIRES_OK(ctx, ctx->allocate_output("values", output_shape, &out));
+    
+    // 根据table的value_dtype来初始化输出tensor为0
+    DataType value_dtype = table->value_dtype();
+    if (value_dtype == DT_FLOAT) {
+        out->flat<float>().setZero();
+    } else if (value_dtype == DT_DOUBLE) {
+        out->flat<double>().setZero();
+    }
+    // 可以根据需要添加更多数据类型的支持
 
     OP_REQUIRES_OK(ctx, table->Find(ctx, key, out, default_value));
   }

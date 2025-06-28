@@ -14,15 +14,20 @@ A high-performance GlideKV library featuring custom TensorFlow operations, writt
 
 ### Option 1: Direct Installation (Recommended)
 ```bash
+# Install dependencies and build
+sh -x install_env.sh
 
 # Build wheel package
-bazel build //GlideKV:_lookup_ops.so
+sh -x build_whl.sh
 
+# Install the package
+pip install dist/glidekv-0.1.0-py3-none-any.whl
 ```
 
 ## 开发与构建说明
 - **Bazel 构建**：所有 C++/TF 自定义算子通过 Bazel 构建，确保与 Python 环境 TensorFlow 版本一致。
 - **环境变量**：需设置 `TF_SO_PATH` 指向当前 Python 环境下的 TensorFlow 路径（`python configure.py` 可自动完成）。
+- **.gitignore** 已优化，避免无关文件入库。
 
 ## 贡献指南
 欢迎提交 Issue 和 PR！请确保：

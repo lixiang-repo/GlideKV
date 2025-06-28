@@ -51,5 +51,6 @@ serving
 tensorflow
 tensorflow_serving
 third_party
-
+build_deps
+core*
 tmp

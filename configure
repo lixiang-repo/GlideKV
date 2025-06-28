@@ -14,8 +14,9 @@ fi
 export TF_SERVING_VERSION="r2.15"
 export TAG="GlideKV-v1"
 
-rm -rf ${dirname}/serving ${dirname}/third_party
-git checkout .bazelrc WORKSPACE
+# rm -rf ${dirname}/tensorflow_serving ${dirname}/third_party
+git checkout WORKSPACE .bazelrc
+cd serving && git checkout WORKSPACE .bazelrc && cd ..
 # Clone TensorFlow Serving if not exists
 if [ ! -d "serving" ]; then
     sudo apt-get update && sudo apt-get install -y libtool
@@ -26,15 +27,17 @@ if [ ! -d "serving" ]; then
 
     cp -r ${dirname}/serving/tensorflow_serving ${dirname}
     cp -r ${dirname}/serving/third_party ${dirname}
+    cp -r ${dirname}/build_deps ${dirname}
 
-    tail -n +2 ${dirname}/serving/WORKSPACE >> ${dirname}/WORKSPACE
-    cat ${dirname}/serving/.bazelrc >> ${dirname}/.bazelrc
-
-    sed -i 's/D_GLIBCXX_USE_CXX11_ABI=0/D_GLIBCXX_USE_CXX11_ABI=1/g' ${dirname}/.bazelrc
-    sed -i '/gen_status_stamp/d' ${dirname}/.bazelrc
 else
     echo "✓ TensorFlow Serving repository already exists"
 fi
+
+tail -n +2 ${dirname}/serving/WORKSPACE >> ${dirname}/WORKSPACE
+cat ${dirname}/serving/.bazelrc >> ${dirname}/.bazelrc
+
+sed -i 's/D_GLIBCXX_USE_CXX11_ABI=0/D_GLIBCXX_USE_CXX11_ABI=1/g' ${dirname}/.bazelrc
+sed -i '/gen_status_stamp/d' ${dirname}/.bazelrc
 
 # Set all env variables
 cd ${dirname}

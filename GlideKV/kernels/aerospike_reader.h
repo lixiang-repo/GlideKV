@@ -5,6 +5,14 @@
 #include <cstdlib>
 #include "tensorflow/core/framework/tensor.h"
 
+// SIMD优化支持
+#ifdef __SSE2__
+#include <emmintrin.h>
+#endif
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 // Aerospike C客户端头文件
 extern "C" {
 #include <aerospike/aerospike.h>
@@ -31,6 +39,9 @@ public:
     bool connected_ = false;
 
     aerospike as_;
+    
+    // 性能优化配置
+    static constexpr uint32_t UNROLL_FACTOR = 8;  // 循环展开因子
     
     AerospikeReader();
     ~AerospikeReader();
@@ -63,6 +74,11 @@ public:
     // 简化的read，只接受keys和values参数
     bool read(const tensorflow::Tensor& key, tensorflow::Tensor* value);
 
-    void extract_vector_from_record(as_record* record, int idx, tensorflow::Tensor* vector_data);
+    void extract_vector_from_record(as_record* record, int idx, 
+                                   decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat);
+    
+    // SIMD优化的向量提取函数
+    void extract_vector_simd(as_list* list, int idx, 
+                           decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat);
     
 }; 
