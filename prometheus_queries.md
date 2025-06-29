@@ -89,6 +89,16 @@ increase(glidekv_aerospike_failed_keys[10m]) / increase(glidekv_aerospike_total_
   annotations:
     summary: "GlideKV错误率过高"
     description: "错误率超过5%"
+
+# lookup错误率过高告警
+- alert: GlideKVErrorRateHigh
+  expr: increase(glidekv_aerospike_lookup_failures_total[5m]) / increase(glidekv_aerospike_lookup_ops_total[5m]) > 0.05
+  for: 2m
+  labels:
+    severity: critical
+  annotations:
+    summary: "GlideKV错误率过高"
+    description: "错误率超过5%"
 ```
 
 ## 优势分析
