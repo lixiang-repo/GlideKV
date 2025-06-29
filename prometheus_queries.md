@@ -16,7 +16,7 @@
 ### 延迟分析
 
 ```promql
-# 过去10分钟的平均查找延迟 (ms)
+# 过去10分钟的平均lookup延迟 (ms)
 increase(glidekv_aerospike_lookup_latency_ms[10m]) / increase(glidekv_aerospike_lookup_ops_total[10m])
 
 # 过去10分钟的平均总延迟 (ms)
