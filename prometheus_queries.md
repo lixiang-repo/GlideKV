@@ -8,7 +8,7 @@
 
 ```promql
 # 计算过去10分钟的平均吞吐量 (keys/sec)
-(increase(glidekv_aerospike_total_keys[10m]) - increase(glidekv_aerospike_failed_keys[10m])) / (increase(glidekv_aerospike_lookup_latency_ms[10m]) / 1000)
+(increase(glidekv_aerospike_total_keys[10m]) - increase(glidekv_aerospike_failed_keys[10m]) - increase(glidekv_aerospike_cache_hit_keys[10m])) / (increase(glidekv_aerospike_lookup_latency_ms[10m]) / 1000)
 ```
 
 ## 性能监控查询
