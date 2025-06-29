@@ -48,15 +48,14 @@ private:
 
     // 使用 map 维护所有指标 - 避免16字节原子操作
     std::unordered_map<std::string, prometheus::Counter*> counters_;
+    // 新增：带值的计数器映射
+    std::unordered_map<std::string, prometheus::Counter*> counters_with_value_;
     std::unordered_map<std::string, prometheus::Gauge*> gauges_;
     std::unordered_map<std::string, prometheus::Histogram*> histograms_;
-    
     // 缓存 Counter Family 以避免重复创建
     std::unordered_map<std::string, prometheus::Family<prometheus::Counter>*> label_counter_;
     
-    // 新增：带值的计数器映射
-    std::unordered_map<std::string, prometheus::Counter*> counters_with_value_;
-    
+
     // 初始化标志
     std::atomic<bool> initialized_{false};
     double global_rate_{2.0};
@@ -323,6 +322,11 @@ public:
         auto histogram_it = instance.histograms_.find(metric_name);
         if (histogram_it != instance.histograms_.end()) {
             return histogram_it->second;
+        }
+
+        auto label_counter_it = instance.label_counter_.find(metric_name);
+        if (label_counter_it != instance.label_counter_.end()) {
+            return label_counter_it->second;
         }
         
         return nullptr;
