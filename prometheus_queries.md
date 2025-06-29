@@ -81,7 +81,7 @@ increase(glidekv_aerospike_failed_keys[10m]) / increase(glidekv_aerospike_total_
     description: "平均延迟超过100ms"
 
 # 特征miss率过高告警
-- alert: GlideKVErrorRateHigh
+- alert: GlideKVFailureRateHigh
   expr: increase(glidekv_aerospike_failed_keys[5m]) / increase(glidekv_aerospike_total_keys[5m]) > 0.05
   for: 2m
   labels:
@@ -91,7 +91,7 @@ increase(glidekv_aerospike_failed_keys[10m]) / increase(glidekv_aerospike_total_
     description: "错误率超过5%"
 
 # lookup错误率过高告警
-- alert: GlideKVErrorRateHigh
+- alert: GlideKVLookupErrorRateHigh
   expr: increase(glidekv_aerospike_lookup_failures_total[5m]) / increase(glidekv_aerospike_lookup_ops_total[5m]) > 0.05
   for: 2m
   labels:
