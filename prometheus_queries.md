@@ -55,19 +55,6 @@ increase(glidekv_aerospike_lookup_failures_total[10m]) / increase(glidekv_aerosp
 increase(glidekv_aerospike_failed_keys[10m]) / increase(glidekv_aerospike_total_keys[10m])
 ```
 
-### 系统资源监控
-
-```promql
-# CPU使用率
-glidekv_system_cpu_usage_percent
-
-# 内存使用率
-glidekv_system_memory_usage_percent
-
-# 可用内存 (GB)
-glidekv_system_memory_available_gb
-```
-
 ## 告警规则示例
 
 ### 缓存性能告警
