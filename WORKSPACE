@@ -34,6 +34,16 @@ git_repository(
     remote = "https://github.com/aerospike/aerospike-client-c.git",
     commit = "354a1283",  # 使用7.0.4版本的commit hash
     init_submodules = True,  # 初始化子模块
-    build_file = "//third_party_aerospike:aerospike_client_c.BUILD",
+    build_file = "//third_party_glidekv:aerospike_client_c.BUILD",
 )
 
+# ===== TBB (Intel Threading Building Blocks) 2020.3 =====
+http_archive(
+    name = "tbb",
+    sha256 = "ebc4f6aa47972daed1f7bf71d100ae5bf6931c2e3144cf299c8cc7d041dca2f3",
+    strip_prefix = "oneTBB-2020.3",
+    urls = [
+        "https://github.com/oneapi-src/oneTBB/archive/refs/tags/v2020.3.tar.gz",
+    ],
+    build_file = "//third_party_glidekv:tbb.BUILD",
+)

@@ -14,6 +14,13 @@ template<typename K, typename V>
 AerospikeReader<K, V>::AerospikeReader() {
     aerospike_init(&as_, NULL);
     loadConfigFromEnv(); // 从环境变量加载配置
+    
+    // 初始化缓存的字符串常量
+    namespace_cstr_ = namespace_.c_str();
+    set_cstr_ = set_.c_str();
+    field_name_cstr_ = field_name_.c_str();
+    
+    init();
 }
 
 template<typename K, typename V>
@@ -66,109 +73,28 @@ void AerospikeReader<K, V>::close() {
     }
 }
 
-// SIMD优化的向量提取函数 - 泛型版本（普通展开）
-template<typename K, typename V>
-void AerospikeReader<K, V>::extract_vector_simd(as_list* list, int idx, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat) {
-    if (!list) return;
-    uint32_t size = as_list_size(list);
-    if (size == 0) return;  // 如果list为空，保持默认值不变
+// 公共工具函数 - 提取Aerospike值
+template<typename V>
+inline V extract_aerospike_value(as_val* v) {
+    if (!v) return static_cast<V>(0);
     
-    uint32_t j = 0;
-    uint32_t unrolled_size = size & ~(UNROLL_FACTOR - 1);
-    for (; j < unrolled_size; j += UNROLL_FACTOR) {
-        __builtin_prefetch(&list, 0, 3);
-        for (uint32_t k = 0; k < UNROLL_FACTOR && (j + k) < size; ++k) {
-            uint32_t pos = j + k;
-            as_val* v = as_list_get(list, pos);
-            if (v && as_val_type(v) == AS_DOUBLE) {
-                value_flat(idx, pos) = static_cast<V>(as_double_getorelse((as_double*)v, 0.0));
-            }
-        }
-    }
-    for (; j < size; ++j) {
-        as_val* v = as_list_get(list, j);
-        if (v && as_val_type(v) == AS_DOUBLE) {
-            value_flat(idx, j) = static_cast<V>(as_double_getorelse((as_double*)v, 0.0));
-        }
+    switch (as_val_type(v)) {
+        case AS_DOUBLE:
+            return static_cast<V>(as_double_getorelse((as_double*)v, 0.0));
+        case AS_INTEGER:
+            return static_cast<V>(as_integer_getorelse((as_integer*)v, 0));
+        default:
+            return static_cast<V>(0);
     }
 }
 
-// float特化：SIMD极致优化
-template<>
-void AerospikeReader<int64_t, float>::extract_vector_simd(as_list* list, int idx, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<float, 2>())& value_flat) {
-    if (!list) return;
+template<typename K, typename V>
+void AerospikeReader<K, V>::extract_vector_from_list(as_list* list, int idx, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat) {
     uint32_t size = as_list_size(list);
-    if (size == 0) return;  // 如果list为空，保持默认值不变
-    
-#ifdef __AVX2__
-    uint32_t j = 0;
-    uint32_t avx_size = size & ~7;
-    for (; j < avx_size; j += 8) {
-        __builtin_prefetch(&list, 0, 3);
-        float values[8] __attribute__((aligned(32)));  // 栈上分配，避免频繁malloc/free
-        
-        for (uint32_t k = 0; k < 8; ++k) {
-            as_val* v = as_list_get(list, j + k);
-            if (v && as_val_type(v) == AS_DOUBLE) {
-                values[k] = static_cast<float>(as_double_getorelse((as_double*)v, 0.0));
-            } else {
-                values[k] = 0.0f;  // 默认值
-            }
-        }
-        __m256 vec = _mm256_load_ps(values);
-        _mm256_storeu_ps(&value_flat(idx, j), vec);
+    if (size == 0) return;
+    for (uint32_t i = 0; i < size; ++i) {
+        value_flat(idx, i) = extract_aerospike_value<V>(as_list_get(list, i));
     }
-    for (; j < size; ++j) {
-        as_val* v = as_list_get(list, j);
-        if (v && as_val_type(v) == AS_DOUBLE) {
-            value_flat(idx, j) = static_cast<float>(as_double_getorelse((as_double*)v, 0.0));
-        }
-    }
-#elif defined(__SSE2__)
-    uint32_t j = 0;
-    uint32_t sse_size = size & ~3;
-    for (; j < sse_size; j += 4) {
-        __builtin_prefetch(&list, 0, 3);
-        float values[4] __attribute__((aligned(16)));  // 栈上分配，避免频繁malloc/free
-        
-        for (uint32_t k = 0; k < 4; ++k) {
-            as_val* v = as_list_get(list, j + k);
-            if (v && as_val_type(v) == AS_DOUBLE) {
-                values[k] = static_cast<float>(as_double_getorelse((as_double*)v, 0.0));
-            } else {
-                values[k] = 0.0f;  // 默认值
-            }
-        }
-        __m128 vec = _mm_load_ps(values);
-        _mm_storeu_ps(&value_flat(idx, j), vec);
-    }
-    for (; j < size; ++j) {
-        as_val* v = as_list_get(list, j);
-        if (v && as_val_type(v) == AS_DOUBLE) {
-            value_flat(idx, j) = static_cast<float>(as_double_getorelse((as_double*)v, 0.0));
-        }
-    }
-#else
-    uint32_t j = 0;
-    uint32_t unrolled_size = size & ~(UNROLL_FACTOR - 1);
-    for (; j < unrolled_size; j += UNROLL_FACTOR) {
-        __builtin_prefetch(&list, 0, 3);
-        for (uint32_t k = 0; k < UNROLL_FACTOR; ++k) {
-            uint32_t pos = j + k;
-            if (pos >= size) break;  // 边界检查
-            as_val* v = as_list_get(list, pos);
-            if (v && as_val_type(v) == AS_DOUBLE) {
-                value_flat(idx, pos) = static_cast<float>(as_double_getorelse((as_double*)v, 0.0));
-            }
-        }
-    }
-    for (; j < size; ++j) {
-        as_val* v = as_list_get(list, j);
-        if (v && as_val_type(v) == AS_DOUBLE) {
-            value_flat(idx, j) = static_cast<float>(as_double_getorelse((as_double*)v, 0.0));
-        }
-    }
-#endif
 }
 
 template<typename K, typename V>
@@ -179,14 +105,15 @@ void AerospikeReader<K, V>::extract_vector_from_record(as_record* record, int id
     as_bin* bins = record->bins.entries;
     if (!bins) return;  // 如果bins为空，保持默认值不变
     
+    // 使用缓存的字符串常量，避免重复调用c_str()
     for (uint16_t i = 0; i < bin_count; ++i) {
         as_bin* bin = &bins[i];
-        if (bin && bin->name && strcmp(bin->name, field_name_.c_str()) == 0) {
+        if (bin && bin->name && strcmp(bin->name, field_name_cstr_) == 0) {
             as_val* val = (as_val*)as_bin_get_value(bin);
             if (val && as_val_type(val) == AS_LIST) {
                 as_list* list = as_list_fromval(val);
                 if (list) {
-                    extract_vector_simd(list, idx, value_flat);
+                    extract_vector_from_list(list, idx, value_flat);
                 }
                 return;  // 找到并处理了字段，退出
             }

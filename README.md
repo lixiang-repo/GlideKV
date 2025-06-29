@@ -14,7 +14,14 @@ A high-performance GlideKV library featuring custom TensorFlow operations, writt
 
 ### Option 1: Direct Installation (Recommended)
 ```bash
-bazel build //GlideKV:_lookup_ops.so
+# Install dependencies and build
+sh -x install_env.sh
+
+# Build wheel package
+sh -x build_whl.sh
+
+# Install the package
+pip install dist/glidekv-0.1.0-py3-none-any.whl
 ```
 
 ## 开发与构建说明

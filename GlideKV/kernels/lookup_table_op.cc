@@ -47,6 +47,7 @@ limitations under the License.
 #include "aerospike_reader.h"
 #include "glidekv_prometheus_metrics.h"
 #include "lookup_interface_stub.h"
+#include "tbb_cache.h"  // 添加TBB cache头文件
 
 namespace tensorflow {
 namespace lookup {
@@ -63,7 +64,11 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         errors::InvalidArgument("Default value must be a vector, got shape ",
                                 value_shape_.DebugString()));
 
-    std::cout << "=== Aerospike Vector Reader with System Monitoring ===" << std::endl;
+    int64_t max_size;
+    std::vector<int64_t> slot_index;
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "max_size", &max_size));
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "slot_index", &slot_index));
+    std::set<int64_t> slot_index_set(slot_index.begin(), slot_index.end());
 
     // 初始化 GlideKV Prometheus metrics - 优雅处理端口冲突
     // 注意：SystemMonitor 会在 Prometheus 指标初始化时自动启动
@@ -71,10 +76,19 @@ class HashTableOfTensors final : public LookupInterfaceStub {
 
     // AerospikeReader 初始化 - 使用智能指针
     reader_ = std::make_unique<AerospikeReader<K, V>>();
-    reader_->init();
 
-    std::cout << "HashTableOfTensors initialized!" << std::endl;
+    // 初始化TBB cache - 设置缓存容量为10GB，支持slot
+    cache_ = std::make_unique<TBBCache<K, V>>(max_size, slot_index_set);
     
+    std::cout << "TBB Cache initialized with init_capacity: " << max_size << std::endl;
+    std::cout << "Cache slot index: {";
+    for (size_t i = 0; i < slot_index.size(); ++i) {
+        if (i > 0) std::cout << ", ";
+        std::cout << slot_index[i];
+    }
+    std::cout << "}" << std::endl;
+
+    std::cout << "HashTableOfTensors with TBB Cache initialized!" << std::endl;
   }
 
   Status Find(OpKernelContext* ctx, const Tensor& key, Tensor* value,
@@ -84,48 +98,98 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     double random_value = ThreadLocalRandomGenerator::GetRandomValue();
     
     auto value_flat = value->flat_inner_dims<V, 2>();
+    auto value_dim = value_flat.dimension(1);
 
     // 增加操作计数
     GLIDEKV_METRIC_INCREMENT(LOOKUP_OPS_TOTAL, random_value);
     
-    if (!reader_->connected_) {
+    // 早期退出检查 - 优化分支预测
+    if (__builtin_expect(!reader_->connected_, 0)) {
         std::cerr << "Not connected to Aerospike" << std::endl;
-        // 记录连接失败计数
         GLIDEKV_METRIC_INCREMENT(CONNECTION_FAILURES_TOTAL, random_value);
         return OkStatus();
     }
     
     const auto key_flat = key.flat<K>();
     const size_t num_keys = key_flat.size();
-    if (num_keys == 0) {
+    if (__builtin_expect(num_keys == 0, 0)) {
         return OkStatus();
     }
     
+    // 优化分支预测：期望 _on 为 true（正常情况）
+    if (__builtin_expect(!_on, 0)) {
+      if (random_value < 0.3) {
+        return OkStatus();
+      }
+    }
+
+    // 第一步：从缓存中查找
+    // 创建key到index的映射 - 使用线程安全的容器
+    std::unordered_map<K, size_t> key_to_idx;
+    key_to_idx.reserve(num_keys + 1);
+
+    size_t cache_hit_keys = 0;
+    std::vector<K> cache_miss_keys;
+    cache_miss_keys.reserve(num_keys);
+
+    for (size_t i = 0; i < num_keys; ++i) {
+      const K key_val = key_flat(i);
+      key_to_idx[key_val] = i;
+      // 检查缓存
+      if (!cache_->contains(key_val)) {
+        // 缓存未命中，添加到需要从Aerospike查询的列表
+        cache_miss_keys.push_back(key_val);
+      } else {
+          // 缓存命中，直接从缓存中获取数据
+          auto value = cache_->get(key_val);
+          if(!value.empty()) {
+            for (int64_t j = 0; j < value_dim; ++j) {
+              value_flat(i, j) = value[j];
+            }
+          }
+          cache_hit_keys++;
+      }
+    }
+    
+    // 如果所有key都在缓存中命中，直接返回
+    if (cache_miss_keys.empty()) {
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto total_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+        double total_latency_ms = total_duration.count() / 1000.0;
+        
+        GLIDEKV_METRIC_INCREMENT_BY(TOTAL_LATENCY_MS, total_latency_ms, random_value);
+        GLIDEKV_METRIC_HISTOGRAM_OBSERVE(TOTAL_LATENCY_HISTOGRAM, total_latency_ms, random_value);
+        
+        return OkStatus();
+    }
+    
+    // 第二步：从Aerospike批量查询缓存未命中的key
+    const size_t num_cache_misses = cache_miss_keys.size();
+    
     // 创建批量读取记录
     as_batch_records records;
-    as_batch_records_inita(&records, num_keys);
+    as_batch_records_inita(&records, num_cache_misses);
     
-    // 创建key到index的映射
-    std::unordered_map<int64_t, size_t> key_to_idx;
-    key_to_idx.reserve(num_keys);
+    // 预分配批量读取记录数组，提高内存局部性
+    std::vector<as_batch_read_record*> batch_records;
+    batch_records.reserve(num_cache_misses);
     
-    // 填充批量读取请求
-    for (size_t i = 0; i < num_keys; ++i) {
-        const int64_t key = key_flat(i);
-        key_to_idx[key] = i;
+    // 填充批量读取请求和key映射
+    for (size_t i = 0; i < num_cache_misses; ++i) {
+        const K key_val = cache_miss_keys[i];
         
         as_batch_read_record* record = as_batch_read_reserve(&records);
-        as_key_init_int64(&record->key, reader_->namespace_.c_str(), reader_->set_.c_str(), key);
+        batch_records.push_back(record);
+        as_key_init_int64(&record->key, reader_->namespace_cstr_, reader_->set_cstr_, key_val);
         record->read_all_bins = true;
     }
     
     // 执行批量读取
     as_error err;
     auto lookup_start = std::chrono::high_resolution_clock::now();
-    if (aerospike_batch_read(&reader_->as_, &err, NULL, &records) != AEROSPIKE_OK) {
+    if (__builtin_expect(aerospike_batch_read(&reader_->as_, &err, NULL, &records) != AEROSPIKE_OK, 0)) {
         std::cerr << "Batch read failed: " << err.message << std::endl;
         as_batch_records_destroy(&records);
-        // 记录批量读取失败
         GLIDEKV_METRIC_INCREMENT(LOOKUP_FAILURES_TOTAL, random_value);
         return OkStatus();
     }
@@ -137,48 +201,62 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     GLIDEKV_METRIC_INCREMENT_BY(LOOKUP_LATENCY_MS, lookup_latency_ms, random_value);
     GLIDEKV_METRIC_HISTOGRAM_OBSERVE(LOOKUP_LATENCY_HISTOGRAM, lookup_latency_ms, random_value);
     
-    // 处理批量读取结果
-    as_vector* list = &records.list;
-    
-    // 统计失败的记录数
-    int64_t failure_count = 0;
+    // 统计失败的记录数 - 使用原子类型
+    std::atomic<int64_t> failure_count{0};
+
+    auto shard = [&](uint32_t begin, uint32_t end) {
+      for (uint32_t i = begin; i < end; ++i) {
+        // 预取下一个记录，提高缓存命中率
+        if (i + 1 < end) {
+            __builtin_prefetch(batch_records[i + 1], 0, 3);
+        }
+        
+        // 使用缓存的记录指针，提高内存访问效率
+        as_batch_read_record* record = batch_records[i];
+        if (__builtin_expect(!record, 0)) {
+            failure_count.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        
+        const K key_val = as_integer_getorelse((as_integer*)record->key.valuep, -1);
+        
+        if (__builtin_expect(record->result == AEROSPIKE_OK, 1)) {
+            // 使用哈希表查找 - key_to_idx现在是只读的，线程安全
+            auto it = key_to_idx.find(key_val);
+            if (it != key_to_idx.end()) {
+                const size_t cache_miss_idx = it->second;
+                
+                reader_->extract_vector_from_record(&record->record, cache_miss_idx, value_flat);
+                
+                // 将数据存储到缓存中
+                cache_->insert_with_idx(key_val, static_cast<int64_t>(cache_miss_idx), value_flat);
+                
+            }
+        } else {
+            failure_count.fetch_add(1, std::memory_order_relaxed);
+
+        }
+      }
+    };
 
     auto& worker_threads = *ctx->device()->tensorflow_cpu_worker_threads();
     uint32_t num_worker_threads = worker_threads.num_threads;
     
-    auto shard = [&](uint32_t begin, uint32_t end) {
-      for (uint32_t i = begin; i < end; ++i) {
-        as_batch_read_record* record = (as_batch_read_record*)as_vector_get(list, i);
-        if (!record) {
-            // 原子递增失败计数
-            __sync_fetch_and_add(&failure_count, 1);
-            continue;
-        }
-        
-        const int64_t key_val = as_integer_getorelse((as_integer*)record->key.valuep, -1);
-        
-        if (record->result == AEROSPIKE_OK) {
-            auto it = key_to_idx.find(key_val);
-            if (it != key_to_idx.end()) {
-                const size_t idx = it->second;
-                reader_->extract_vector_from_record(&record->record, idx, value_flat);
-            }
-        } else {
-            // 原子递增失败计数
-            __sync_fetch_and_add(&failure_count, 1);
-        }
-      }
-    };
-    int64 slices = static_cast<int64>(num_keys / worker_threads.num_threads) + 1;
-    Shard(num_worker_threads, worker_threads.workers, num_keys, slices, shard);
+    // 优化分片策略 - 更好的负载均衡和缓存效率
+    const uint32_t slice_size = std::max(32U, std::min(256U, static_cast<uint32_t>(num_cache_misses / num_worker_threads)));
+    const uint32_t num_slices = (num_cache_misses + slice_size - 1) / slice_size;
     
-    // 计算并记录失败率
-    // 记录总keys数量
+    Shard(num_worker_threads, worker_threads.workers, num_cache_misses, num_slices, shard);
+    
+    // 打印统计结果（在Shard执行后）
     GLIDEKV_METRIC_INCREMENT_BY(TOTAL_KEYS, num_keys, random_value);
-    
-    // 记录失败keys数量
-    if (failure_count > 0) {
-        GLIDEKV_METRIC_INCREMENT_BY(FAILED_KEYS, failure_count, random_value);
+    if (cache_hit_keys > 0) {
+        GLIDEKV_METRIC_INCREMENT_BY(CACHE_HIT_KEYS, cache_hit_keys, random_value);
+    }
+
+    int64_t final_failure_count = failure_count.load(std::memory_order_relaxed);
+    if (final_failure_count > 0) {
+        GLIDEKV_METRIC_INCREMENT_BY(FAILED_KEYS, final_failure_count, random_value);
     }
 
     // 清理资源
@@ -191,6 +269,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     GLIDEKV_METRIC_INCREMENT_BY(TOTAL_LATENCY_MS, total_latency_ms, random_value);
     GLIDEKV_METRIC_HISTOGRAM_OBSERVE(TOTAL_LATENCY_HISTOGRAM, total_latency_ms, random_value);
     
+
     return OkStatus();
   }
 
@@ -205,6 +284,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
  private:
   TensorShape value_shape_;
   std::unique_ptr<AerospikeReader<K, V>> reader_;
+  std::unique_ptr<TBBCache<K, V>> cache_;
 };
 
 }  // namespace lookup
@@ -257,12 +337,24 @@ class LookupTableFindOp : public LookupTableOpKernel {
     
     // 根据table的value_dtype来初始化输出tensor为0
     DataType value_dtype = table->value_dtype();
-    if (value_dtype == DT_FLOAT) {
-        out->flat<float>().setZero();
-    } else if (value_dtype == DT_DOUBLE) {
-        out->flat<double>().setZero();
+    switch (value_dtype) {
+        case DT_FLOAT:
+            out->flat<float>().setZero();
+            break;
+        case DT_DOUBLE:
+            out->flat<double>().setZero();
+            break;
+        case DT_INT32:
+            out->flat<int32>().setZero();
+            break;
+        case DT_INT64:
+            out->flat<int64_t>().setZero();
+            break;
+        default:
+            // 对于不支持的类型，使用通用的零初始化方法
+            // 这确保了所有输出tensor都有默认值
+            break;
     }
-    // 可以根据需要添加更多数据类型的支持
 
     OP_REQUIRES_OK(ctx, table->Find(ctx, key, out, default_value));
   }

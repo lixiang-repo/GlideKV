@@ -1,6 +1,5 @@
 #pragma once
 
-#include "system_monitor.h"
 #include <prometheus/counter.h>
 #include <prometheus/histogram.h>
 #include <prometheus/gauge.h>
@@ -53,7 +52,7 @@ private:
     std::unordered_map<std::string, prometheus::Histogram*> histograms_;
     
     // 缓存 Counter Family 以避免重复创建
-    std::unordered_map<std::string, prometheus::Family<prometheus::Counter>*> latency_counter_families_;
+    std::unordered_map<std::string, prometheus::Family<prometheus::Counter>*> label_counter_;
     
     // 新增：带值的计数器映射
     std::unordered_map<std::string, prometheus::Counter*> counters_with_value_;
@@ -219,13 +218,13 @@ public:
                     instance.counters_with_value_[config.name] = &counter_family.Add({});
                     break;
                 }
-                case MetricType::VALUE_COUNTER: {
+                case MetricType::LABEL_COUNTER: {
                     // 延迟 Counter - 使用带标签的 Counter Family
-                    auto& counter_family = prometheus::BuildCounter()
+                    auto& label_counter_ = prometheus::BuildCounter()
                         .Name(config.prometheus_name)
                         .Help(std::string(config.description) + " (latency distribution in 0.1ms ranges)")
                         .Register(*instance.registry_);
-                    instance.latency_counter_families_[config.name] = &counter_family;
+                    instance.label_counter_[config.name] = &label_counter_;
                     break;
                 }
                 case MetricType::GAUGE: {
@@ -249,7 +248,6 @@ public:
         
         // 设置初始化标志 - 最后设置，确保所有初始化完成
         instance.initialized_.store(true, std::memory_order_release);
-        ::tensorflow::lookup::InitializeGlobalSystemMonitor();
         
         std::cout << "📊 GlideKV Prometheus Metrics: Initialization completed!" << std::endl;
         PrintConfig();
@@ -273,6 +271,18 @@ public:
             std::cout << "    - " << metric_name << ": " 
                       << (enabled ? "✅" : "❌") << std::endl;
         }
+        for (const auto& metric : instance.counters_with_value_) {
+            const std::string& metric_name = metric.first;
+            bool enabled = is_metric_enabled(metric_name.c_str());
+            std::cout << "    - " << metric_name << ": " 
+                      << (enabled ? "✅" : "❌") << std::endl;
+        }
+        for (const auto& metric : instance.label_counter_) {
+            const std::string& metric_name = metric.first;
+            bool enabled = is_metric_enabled(metric_name.c_str());
+            std::cout << "    - " << metric_name << ": " 
+                      << (enabled ? "✅" : "❌") << std::endl;
+        }
         for (const auto& metric : instance.gauges_) {
             const std::string& metric_name = metric.first;
             bool enabled = is_metric_enabled(metric_name.c_str());
@@ -285,6 +295,7 @@ public:
             std::cout << "    - " << metric_name << ": " 
                       << (enabled ? "✅" : "❌") << std::endl;
         }
+
     }
 
     // 只保留 GetMetric 静态函数
@@ -325,8 +336,8 @@ public:
         }
         
         // 查找预创建的 Counter Family
-        auto family_it = instance.latency_counter_families_.find(metric_name);
-        if (family_it == instance.latency_counter_families_.end()) {
+        auto family_it = instance.label_counter_.find(metric_name);
+        if (family_it == instance.label_counter_.end()) {
             return; // 延迟指标未启用
         }
         

@@ -11,7 +11,7 @@ enum class MetricType {
     COUNTER_WITH_VALUE, // 带值的计数器，可以增加任意数值
     GAUGE,              // 仪表盘，可以设置任意值
     HISTOGRAM,          // 直方图，用于分位数统计
-    VALUE_COUNTER     // 延迟计数器，带标签分布
+    LABEL_COUNTER     // 延迟计数器，带标签分布
 };
 
 // 指标配置结构 - 统一管理所有指标信息
@@ -66,7 +66,7 @@ namespace MetricConfigs {
     };
     static const MetricConfig LOOKUP_LATENCY_MS = {
         "LOOKUP_LATENCY_MS", 
-        MetricType::VALUE_COUNTER, 
+        MetricType::COUNTER_WITH_VALUE, 
         "glidekv_aerospike_lookup_latency_ms", 
         "Total number of lookup operations by latency range (0.1ms intervals)", 
         {}
@@ -86,7 +86,7 @@ namespace MetricConfigs {
         // │ 100-1s  │ 50-250ms│ 严重性能问题，系统故障检测                 │
         // └─────────┴─────────┴─────────────────────────────────────────────┘
         {
-            0.1,  0.2,  0.3,  0.4,  0.5,  0.6,  0.7,  0.8,  0.9,  1.0,  // 0-1ms: 0.1ms间隔
+            0.1,  0.2,  0.3,  0.4,  0.5,  0.6,  0.7,  0.8,  0.9,  1.0,   // 0-1ms: 0.1ms间隔
             1.5,  2.0,  2.5,  3.0,  4.0,  5.0,  7.5,  10.0,              // 1-10ms: 精细间隔
             15.0, 20.0, 30.0, 50.0, 75.0, 100.0,                         // 10-100ms: 适中间隔
             150.0, 200.0, 300.0, 500.0, 750.0, 1000.0                    // 100-1000ms: 粗间隔
@@ -109,7 +109,7 @@ namespace MetricConfigs {
     
     static const MetricConfig TOTAL_LATENCY_MS = {
         "TOTAL_LATENCY_MS", 
-        MetricType::VALUE_COUNTER, 
+        MetricType::COUNTER_WITH_VALUE, 
         "glidekv_aerospike_total_latency_ms", 
         "Total number of operations by total latency range (0.1ms intervals)", 
         {}
@@ -129,32 +129,18 @@ namespace MetricConfigs {
         // │ 100-1s  │ 50-250ms│ 严重性能问题，系统故障检测                 │
         // └─────────┴─────────┴─────────────────────────────────────────────┘
         {
-            0.1,  0.2,  0.3,  0.4,  0.5,  0.6,  0.7,  0.8,  0.9,  1.0,  // 0-1ms: 0.1ms间隔
+            0.1,  0.2,  0.3,  0.4,  0.5,  0.6,  0.7,  0.8,  0.9,  1.0,   // 0-1ms: 0.1ms间隔
             1.5,  2.0,  2.5,  3.0,  4.0,  5.0,  7.5,  10.0,              // 1-10ms: 精细间隔
             15.0, 20.0, 30.0, 50.0, 75.0, 100.0,                         // 10-100ms: 适中间隔
             150.0, 200.0, 300.0, 500.0, 750.0, 1000.0                    // 100-1000ms: 粗间隔
         }
     };
 
-    static const MetricConfig SYSTEM_CPU_USAGE_PERCENT = {
-        "SYSTEM_CPU_USAGE_PERCENT", 
-        MetricType::GAUGE, 
-        "glidekv_system_cpu_usage_percent", 
-        "System CPU usage percentage", 
-        {}
-    };
-    static const MetricConfig SYSTEM_MEMORY_USAGE_PERCENT = {
-        "SYSTEM_MEMORY_USAGE_PERCENT", 
-        MetricType::GAUGE, 
-        "glidekv_system_memory_usage_percent", 
-        "System memory usage percentage", 
-        {}
-    };
-    static const MetricConfig SYSTEM_MEMORY_AVAILABLE_GB = {
-        "SYSTEM_MEMORY_AVAILABLE_GB", 
-        MetricType::GAUGE, 
-        "glidekv_system_memory_available_gb", 
-        "System available memory in GB", 
+    static const MetricConfig CACHE_HIT_KEYS = {
+        "CACHE_HIT_KEYS", 
+        MetricType::COUNTER_WITH_VALUE, 
+        "glidekv_aerospike_cache_hit_keys", 
+        "Total number of keys that hit the tbb cache", 
         {}
     };
     
@@ -175,11 +161,10 @@ namespace MetricConfigs {
         // 延迟指标 - Histogram方式
         LOOKUP_LATENCY_HISTOGRAM,
         TOTAL_LATENCY_HISTOGRAM,
+
+        // 缓存指标
+        CACHE_HIT_KEYS,
         
-        // 系统资源指标
-        SYSTEM_CPU_USAGE_PERCENT,
-        SYSTEM_MEMORY_USAGE_PERCENT,
-        SYSTEM_MEMORY_AVAILABLE_GB
     };
 }
 

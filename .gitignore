@@ -51,6 +51,15 @@ serving
 tensorflow
 tensorflow_serving
 third_party
+third_party/boost/
+third_party/darts_clone/
+third_party/icu/
+third_party/libevent/
+third_party/rapidjson/
+third_party/sentencepiece/
+third_party/tf_decision_forests/
+third_party/tf_text/
+
 build_deps
 core*
 tmp
