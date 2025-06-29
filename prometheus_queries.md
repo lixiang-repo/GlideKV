@@ -1,14 +1,14 @@
 # GlideKV Prometheus 查询指南
 
-## 吞吐量计算查询
+## Aerospike 吞吐量计算查询
 
 ### 使用Counter计算真实吞吐量（推荐）
 
-使用 `TOTAL_KEYS`、`FAILED_KEYS` 和 `LOOKUP_LATENCY_MS` 三个Counter来计算真实的吞吐量：
+使用 `TOTAL_KEYS`、 `CACHE_HIT_KEYS`、`FAILED_KEYS` 和 `LOOKUP_LATENCY_MS` 三个Counter来计算真实的吞吐量：
 
 ```promql
 # 计算过去10分钟的平均吞吐量 (keys/sec)
-(increase(glidekv_aerospike_total_keys[10m]) - increase(glidekv_aerospike_failed_keys[10m]) - increase(glidekv_aerospike_cache_hit_keys[10m])) / (increase(glidekv_aerospike_lookup_latency_ms[10m]) / 1000)
+(increase(glidekv_aerospike_total_keys[10m]) - increase(glidekv_aerospike_cache_hit_keys[10m]) - increase(glidekv_aerospike_failed_keys[10m])) / (increase(glidekv_aerospike_lookup_latency_ms[10m]) / 1000)
 ```
 
 ## 性能监控查询
