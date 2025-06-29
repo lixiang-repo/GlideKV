@@ -12,7 +12,6 @@ namespace lookup {
 // Stub base class for LookupInterface, implements no-op or default methods
 class LookupInterfaceStub : public LookupInterface {
  public:
-  bool _on = true;  // 初始化状态标志，默认开启
   std::atomic<bool> initialized_ = false;
 
  public:

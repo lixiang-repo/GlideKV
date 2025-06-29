@@ -115,13 +115,6 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     if (__builtin_expect(num_keys == 0, 0)) {
         return OkStatus();
     }
-    
-    // 优化分支预测：期望 _on 为 true（正常情况）
-    if (__builtin_expect(!_on, 0)) {
-      if (random_value < 0.3) {
-        return OkStatus();
-      }
-    }
 
     // 第一步：从缓存中查找
     // 创建key到index的映射 - 使用线程安全的容器
