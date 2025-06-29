@@ -51,8 +51,6 @@ increase(glidekv_aerospike_lookup_failures_total[10m]) / increase(glidekv_aerosp
 ```
 
 ### 特征推理miss率
-
-# 特征miss率 (使用Counter计算)
 ```
 increase(glidekv_aerospike_failed_keys[10m]) / increase(glidekv_aerospike_total_keys[10m])
 ```
