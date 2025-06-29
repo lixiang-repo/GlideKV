@@ -80,7 +80,7 @@ increase(glidekv_aerospike_failed_keys[10m]) / increase(glidekv_aerospike_total_
     summary: "GlideKV延迟过高"
     description: "平均延迟超过100ms"
 
-# 错误率过高告警
+# 特征miss率过高告警
 - alert: GlideKVErrorRateHigh
   expr: increase(glidekv_aerospike_failed_keys[5m]) / increase(glidekv_aerospike_total_keys[5m]) > 0.05
   for: 2m
