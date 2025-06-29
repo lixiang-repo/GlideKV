@@ -54,7 +54,7 @@ private:
     std::unordered_map<std::string, prometheus::Histogram*> histograms_;
     // 缓存 Counter Family 以避免重复创建
     std::unordered_map<std::string, prometheus::Family<prometheus::Counter>*> label_counter_;
-    
+    std::unordered_map<std::string, prometheus::Family<prometheus::Counter>*> label_counter_with_value_;
 
     // 初始化标志
     std::atomic<bool> initialized_{false};
@@ -217,15 +217,6 @@ public:
                     instance.counters_with_value_[config.name] = &counter_family.Add({});
                     break;
                 }
-                case MetricType::LABEL_COUNTER: {
-                    // 延迟 Counter - 使用带标签的 Counter Family
-                    auto& label_counter_ = prometheus::BuildCounter()
-                        .Name(config.prometheus_name)
-                        .Help(std::string(config.description) + " (latency distribution in 0.1ms ranges)")
-                        .Register(*instance.registry_);
-                    instance.label_counter_[config.name] = &label_counter_;
-                    break;
-                }
                 case MetricType::GAUGE: {
                     auto& gauge_family = prometheus::BuildGauge()
                         .Name(config.prometheus_name)
@@ -240,6 +231,24 @@ public:
                         .Help(config.description)
                         .Register(*instance.registry_);
                     instance.histograms_[config.name] = &histogram_family.Add({}, config.buckets);
+                    break;
+                }
+                case MetricType::LABEL_COUNTER: {
+                    // 延迟 Counter - 使用带标签的 Counter Family
+                    auto& label_counter_ = prometheus::BuildCounter()
+                        .Name(config.prometheus_name)
+                        .Help(std::string(config.description) + " (latency distribution in 0.1ms ranges)")
+                        .Register(*instance.registry_);
+                    instance.label_counter_[config.name] = &label_counter_;
+                    break;
+                }
+                case MetricType::LABEL_COUNTER_WITH_VALUE: {
+                    // 带值的延迟 Counter - 使用带标签的 Counter Family
+                    auto& label_counter_with_value_ = prometheus::BuildCounter()
+                        .Name(config.prometheus_name)
+                        .Help(std::string(config.description))
+                        .Register(*instance.registry_);
+                    instance.label_counter_with_value_[config.name] = &label_counter_with_value_;
                     break;
                 }
             }
@@ -276,12 +285,6 @@ public:
             std::cout << "    - " << metric_name << ": " 
                       << (enabled ? "✅" : "❌") << std::endl;
         }
-        for (const auto& metric : instance.label_counter_) {
-            const std::string& metric_name = metric.first;
-            bool enabled = is_metric_enabled(metric_name.c_str());
-            std::cout << "    - " << metric_name << ": " 
-                      << (enabled ? "✅" : "❌") << std::endl;
-        }
         for (const auto& metric : instance.gauges_) {
             const std::string& metric_name = metric.first;
             bool enabled = is_metric_enabled(metric_name.c_str());
@@ -289,6 +292,18 @@ public:
                       << (enabled ? "✅" : "❌") << std::endl;
         }
         for (const auto& metric : instance.histograms_) {
+            const std::string& metric_name = metric.first;
+            bool enabled = is_metric_enabled(metric_name.c_str());
+            std::cout << "    - " << metric_name << ": " 
+                      << (enabled ? "✅" : "❌") << std::endl;
+        }
+        for (const auto& metric : instance.label_counter_) {
+            const std::string& metric_name = metric.first;
+            bool enabled = is_metric_enabled(metric_name.c_str());
+            std::cout << "    - " << metric_name << ": " 
+                      << (enabled ? "✅" : "❌") << std::endl;
+        }
+        for (const auto& metric : instance.label_counter_with_value_) {
             const std::string& metric_name = metric.first;
             bool enabled = is_metric_enabled(metric_name.c_str());
             std::cout << "    - " << metric_name << ": " 
@@ -328,6 +343,11 @@ public:
         if (label_counter_it != instance.label_counter_.end()) {
             return label_counter_it->second;
         }
+
+        auto label_counter_with_value_it = instance.label_counter_with_value_.find(metric_name);
+        if (label_counter_with_value_it != instance.label_counter_with_value_.end()) {
+            return label_counter_with_value_it->second;
+        }
         
         return nullptr;
     }
@@ -340,8 +360,8 @@ public:
         }
         
         // 查找预创建的 Counter Family
-        auto family_it = instance.label_counter_.find(metric_name);
-        if (family_it == instance.label_counter_.end()) {
+        auto label_counter_it = instance.label_counter_.find(metric_name);
+        if (label_counter_it == instance.label_counter_.end()) {
             return; // 延迟指标未启用
         }
         
@@ -355,9 +375,25 @@ public:
         std::string range_label = oss.str();
         
         // 使用 Counter Family 创建或获取带标签的 Counter
-        auto& counter_family = *family_it->second;
-        auto& counter = counter_family.Add({{"range", range_label}});
+        auto& label_counter = *label_counter_it->second;
+        auto& counter = label_counter.Add({{"range", range_label}});
         counter.Increment();
+    }
+
+    static void RecordLabelCounterWithValue(const std::string& metric_name, const std::string& label, double value) {
+        auto& instance = getInstance();
+        if (!instance.initialized_.load(std::memory_order_acquire)) {
+            return;
+        }
+
+        auto label_counter_with_value_it = instance.label_counter_with_value_.find(metric_name);
+        if (label_counter_with_value_it == instance.label_counter_with_value_.end()) {
+            return; // 延迟指标未启用
+        }
+
+        auto& label_counter_with_value = *label_counter_with_value_it->second;
+        auto& counter = label_counter_with_value.Add({{"label", label}});
+        counter.Increment(value);
     }
 };
 
@@ -392,13 +428,6 @@ public:
         } \
     } while(0)
 
-#define GLIDEKV_METRIC_OBSERVE(metric_name, value, random_value) \
-    do { \
-        if (random_value < GlideKVPrometheusMetricsManager::get_global_sampling_rate()) { \
-            GlideKVPrometheusMetricsManager::RecordLatencyCounter(MetricConfigs::metric_name.name, value); \
-        } \
-    } while(0)
-
 #define GLIDEKV_METRIC_HISTOGRAM_OBSERVE(metric_name, value, random_value) \
     do { \
         if (random_value < GlideKVPrometheusMetricsManager::get_global_sampling_rate()) { \
@@ -406,6 +435,20 @@ public:
             if (metric) { \
                 metric->Observe(value); \
             } \
+        } \
+    } while(0)
+
+#define GLIDEKV_METRIC_LABEL_COUNTER(metric_name, label, value, random_value) \
+    do { \
+        if (random_value < GlideKVPrometheusMetricsManager::get_global_sampling_rate()) { \
+            GlideKVPrometheusMetricsManager::RecordLatencyCounter(MetricConfigs::metric_name.name, value); \
+        } \
+    } while(0)
+
+#define GLIDEKV_METRIC_LABEL_COUNTER_WITH_VALUE(metric_name, label, value, random_value) \
+    do { \
+        if (random_value < GlideKVPrometheusMetricsManager::get_global_sampling_rate()) { \
+            GlideKVPrometheusMetricsManager::RecordLabelCounterWithValue(MetricConfigs::metric_name.name, label, value); \
         } \
     } while(0)
 

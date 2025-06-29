@@ -10,6 +10,20 @@ A high-performance GlideKV library featuring custom TensorFlow operations, writt
 - 📦 **Wheel Packaging**: Easily build and distribute as a Python wheel
 - 🔧 **TensorFlow Serving**: Production-ready model serving capabilities
 
+## Quick Start
+
+### Option 1: Direct Installation (Recommended)
+```bash
+# Install dependencies and build
+sh -x install_env.sh
+
+# Build wheel package
+sh -x build_whl.sh
+
+# Install the package
+pip install dist/glidekv-0.1.0-py3-none-any.whl
+```
+
 ## 开发与构建说明
 - **Bazel 构建**：所有 C++/TF 自定义算子通过 Bazel 构建，确保与 Python 环境 TensorFlow 版本一致。
 - **环境变量**：需设置 `TF_SO_PATH` 指向当前 Python 环境下的 TensorFlow 路径（`python configure.py` 可自动完成）。

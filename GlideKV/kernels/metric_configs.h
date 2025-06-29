@@ -11,7 +11,8 @@ enum class MetricType {
     COUNTER_WITH_VALUE, // 带值的计数器，可以增加任意数值
     GAUGE,              // 仪表盘，可以设置任意值
     HISTOGRAM,          // 直方图，用于分位数统计
-    LABEL_COUNTER     // 延迟计数器，带标签分布
+    LABEL_COUNTER,      // 延迟计数器，带标签分布
+    LABEL_COUNTER_WITH_VALUE, // 带值、带标签的计数器，
 };
 
 // 指标配置结构 - 统一管理所有指标信息
@@ -49,6 +50,10 @@ struct MetricConfig {
 // │ LABEL_COUNTER     │ 带标签的延迟计数器        │ 精确延迟统计(0.1ms间隔)       │ 按标签分组查询              │
 // │                   │ 提供精确延迟分布          │ 延迟范围分布统计              │                           │
 // │                   │ 支持标签过滤             │                             │                           │
+// ├─────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+// │ LABEL_COUNTER_WITH_VALUE│ 带值、带标签的计数器│ 按标签统计失败数量           │ 按标签分组查询              │
+// │                   │ 支持标签和数值累加        │ 按错误类型统计失败数          │ increase(), rate()         │
+// │                   │ 适合分类统计             │ 按slot统计失败数             │                           │
 // └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 //
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -91,6 +96,12 @@ struct MetricConfig {
 // ├─────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 // │ 趋势分析          │ COUNTER                  │ deriv(rate(total_keys[5m])) │ 吞吐量变化趋势              │
 // │                   │ TOTAL_KEYS               │                             │                           │
+// ├─────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+// │ 分类错误统计      │ LABEL_COUNTER_WITH_VALUE │ increase(label_failed_keys  │ 按错误类型统计失败率        │
+// │                   │ LABEL_FAILED_KEYS        │ {error_type="timeout"}[5m]) │                           │
+// ├─────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+// │ 精确延迟分析      │ LABEL_COUNTER            │ increase(label_latency      │ 按延迟范围统计分布          │
+// │                   │ LABEL_LATENCY            │ {range="0.1-1ms"}[5m])      │                           │
 // └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 namespace MetricConfigs {
     // 操作计数指标 - 基础监控
@@ -154,11 +165,11 @@ namespace MetricConfigs {
         "Total number of keys requested for lookup operations - 用于计算吞吐量和成功率", 
         {}
     };
-    static const MetricConfig FAILED_KEYS = {
-        "FAILED_KEYS", 
-        MetricType::COUNTER_WITH_VALUE, 
-        "glidekv_aerospike_failed_keys", 
-        "Total number of keys that failed during lookup operations - 用于计算失败率和错误分析", 
+    static const MetricConfig LABEL_FAILED_KEYS = {
+        "LABEL_FAILED_KEYS", 
+        MetricType::LABEL_COUNTER_WITH_VALUE, 
+        "glidekv_aerospike_label_failed_keys", 
+        "Total number of keys that failed during lookup operations by label - 用于计算失败率和错误分析", 
         {}
     };
     
@@ -201,6 +212,23 @@ namespace MetricConfigs {
         {}
     };
     
+    // 兼容性指标 - 保持向后兼容
+    static const MetricConfig FAILED_KEYS = {
+        "FAILED_KEYS", 
+        MetricType::COUNTER_WITH_VALUE, 
+        "glidekv_aerospike_failed_keys", 
+        "Total number of keys that failed during lookup operations - 用于计算失败率和错误分析（兼容性指标）", 
+        {}
+    };
+
+        static const MetricConfig SLOT_ID_FAILED_KEYS = {
+        "SLOT_ID_FAILED_KEYS", 
+        MetricType::LABEL_COUNTER_WITH_VALUE, 
+        "glidekv_aerospike_slot_id_failed_keys", 
+        "Total number of keys that failed during lookup operations by slot id - 用于计算失败率和错误分析（兼容性指标）", 
+        {}
+    };
+    
     // 指标分类配置 - 便于管理和查询
     static const std::vector<MetricConfig> ALL_CONFIGS = {
         // 操作计数指标 - 基础监控
@@ -210,7 +238,7 @@ namespace MetricConfigs {
         
         // 吞吐量指标 - 业务监控
         TOTAL_KEYS,              // 总请求keys数
-        FAILED_KEYS,             // 失败keys数
+        LABEL_FAILED_KEYS,             // 失败keys数
         
         // 延迟指标 - Counter方式 (用于平均值计算)
         LOOKUP_LATENCY_MS,       // 查找延迟累计
@@ -222,6 +250,7 @@ namespace MetricConfigs {
 
         // 缓存指标 - 性能优化
         CACHE_HIT_KEYS,          // 缓存命中keys数
+        FAILED_KEYS,             // 失败keys数
     };
 }
 

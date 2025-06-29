@@ -88,6 +88,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     }
     std::cout << "}" << std::endl;
 
+    startDaemon();
     std::cout << "HashTableOfTensors with TBB Cache initialized!" << std::endl;
   }
 
@@ -114,6 +115,13 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     const size_t num_keys = key_flat.size();
     if (__builtin_expect(num_keys == 0, 0)) {
         return OkStatus();
+    }
+    
+    // 优化分支预测：期望 _on 为 true（正常情况）
+    if (__builtin_expect(!_on, 0)) {
+      if (random_value < 0.3) {
+        return OkStatus();
+      }
     }
 
     // 第一步：从缓存中查找
@@ -226,8 +234,11 @@ class HashTableOfTensors final : public LookupInterfaceStub {
                 
             }
         } else {
+            // 统计失败的记录数 - 使用原子类型
             failure_count.fetch_add(1, std::memory_order_relaxed);
 
+            std::string label = std::to_string(key_val >> 48);
+            GLIDEKV_METRIC_LABEL_COUNTER_WITH_VALUE(SLOT_ID_FAILED_KEYS, label, 1, random_value);
         }
       }
     };
