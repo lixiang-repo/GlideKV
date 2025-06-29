@@ -68,7 +68,6 @@ protected:
     
     std::vector<V> default_value_;                          // 默认值，当key不存在时返回
     double max_size_;                                       // 最大容量
-    double max_size_per_thread_;                            // 每个线程最大容量
     std::set<K> slot_index_;                                // cache slot index，用于过滤无效key
     
     tbb::concurrent_hash_map<K, std::vector<V>> cache_;         // 主缓存：并发哈希表，存储实际数据
