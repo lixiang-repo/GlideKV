@@ -116,41 +116,49 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     if (__builtin_expect(num_keys == 0, 0)) {
         return OkStatus();
     }
-    
-    // 优化分支预测：期望 _on 为 true（正常情况）
-    if (__builtin_expect(!_on, 0)) {
-      if (random_value < 0.3) {
-        return OkStatus();
-      }
-    }
 
     // 第一步：从缓存中查找
     // 创建key到index的映射 - 使用线程安全的容器
     std::unordered_map<K, size_t> key_to_idx;
     key_to_idx.reserve(num_keys + 1);
 
-    size_t cache_hit_keys = 0;
+    std::vector<K> cache_hit_keys;
     std::vector<K> cache_miss_keys;
     cache_miss_keys.reserve(num_keys);
+    cache_hit_keys.reserve(num_keys);
 
     for (size_t i = 0; i < num_keys; ++i) {
       const K key_val = key_flat(i);
       key_to_idx[key_val] = i;
       // 检查缓存
-      if (!cache_->contains(key_val)) {
+      if (cache_->contains(key_val)) {
+        cache_hit_keys.push_back(key_val);
+      } else {
         // 缓存未命中，添加到需要从Aerospike查询的列表
         cache_miss_keys.push_back(key_val);
-      } else {
-          // 缓存命中，直接从缓存中获取数据
-          auto value = cache_->get(key_val);
-          if(!value.empty()) {
-            for (int64_t j = 0; j < value_dim; ++j) {
-              value_flat(i, j) = value[j];
-            }
-          }
-          cache_hit_keys++;
+        
       }
     }
+    auto& worker_threads = *ctx->device()->tensorflow_cpu_worker_threads();
+    uint32_t num_worker_threads = worker_threads.num_threads;
+    
+    auto cache_hit_shard = [&](uint32_t begin, uint32_t end) {
+      for (uint32_t i = begin; i < end; ++i) {
+        const K key_val = cache_hit_keys[i];
+
+        auto it = key_to_idx.find(key_val);
+        if (it != key_to_idx.end()) {
+          const size_t idx = it->second;
+
+          auto value = cache_->get(key_val);
+          std::copy(value.begin(), value.end(), value_flat.data() + idx * value_dim);
+        }
+
+      }
+    };
+    const uint32_t cache_hit_slice_size = std::max(32U, std::min(256U, static_cast<uint32_t>(cache_hit_keys.size() / num_worker_threads)));
+    const uint32_t cache_hit_num_slices = (cache_hit_keys.size() + cache_hit_slice_size - 1) / cache_hit_slice_size;
+    Shard(num_worker_threads, worker_threads.workers, cache_hit_keys.size(), cache_hit_num_slices, cache_hit_shard);
     
     // 如果所有key都在缓存中命中，直接返回
     if (cache_miss_keys.empty()) {
@@ -221,7 +229,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         
         const K key_val = as_integer_getorelse((as_integer*)record->key.valuep, -1);
         
-        if (__builtin_expect(record->result == AEROSPIKE_OK, 1)) {
+	if (record->result == AEROSPIKE_OK) {
             // 使用哈希表查找 - key_to_idx现在是只读的，线程安全
             auto it = key_to_idx.find(key_val);
             if (it != key_to_idx.end()) {
@@ -243,19 +251,15 @@ class HashTableOfTensors final : public LookupInterfaceStub {
       }
     };
 
-    auto& worker_threads = *ctx->device()->tensorflow_cpu_worker_threads();
-    uint32_t num_worker_threads = worker_threads.num_threads;
-    
     // 优化分片策略 - 更好的负载均衡和缓存效率
     const uint32_t slice_size = std::max(32U, std::min(256U, static_cast<uint32_t>(num_cache_misses / num_worker_threads)));
     const uint32_t num_slices = (num_cache_misses + slice_size - 1) / slice_size;
-    
     Shard(num_worker_threads, worker_threads.workers, num_cache_misses, num_slices, shard);
     
     // 打印统计结果（在Shard执行后）
     GLIDEKV_METRIC_INCREMENT_BY(TOTAL_KEYS, num_keys, random_value);
-    if (cache_hit_keys > 0) {
-        GLIDEKV_METRIC_INCREMENT_BY(CACHE_HIT_KEYS, cache_hit_keys, random_value);
+    if (cache_hit_keys.size() > 0) {
+        GLIDEKV_METRIC_INCREMENT_BY(CACHE_HIT_KEYS, cache_hit_keys.size(), random_value);
     }
 
     int64_t final_failure_count = failure_count.load(std::memory_order_relaxed);
