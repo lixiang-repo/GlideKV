@@ -173,10 +173,11 @@ public:
         std::vector<V> vector_data;
         int64_t value_dim = value_flat.dimension(1);
         vector_data.reserve(value_dim);
-        for (int64_t j = 0; j < value_dim; ++j) {
-            vector_data.push_back(value_flat(idx, j));
-        }
+        std::copy(value_flat.data() + idx * value_dim, value_flat.data() + (idx + 1) * value_dim, vector_data.begin());
         
+        // std::cout << "vector_data.size() = " << vector_data.size() << std::endl;
+        // std::cout << "value_flat.data() + idx * value_dim = " << value_flat.data() + idx * value_dim << std::endl;
+        // std::cout << "value_flat.data() + (idx + 1) * value_dim = " << value_flat.data() + (idx + 1) * value_dim << std::endl;
         insert(key, vector_data);
 
     }
