@@ -88,7 +88,6 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     }
     std::cout << "}" << std::endl;
 
-    startDaemon();
     std::cout << "HashTableOfTensors with TBB Cache initialized!" << std::endl;
   }
 
