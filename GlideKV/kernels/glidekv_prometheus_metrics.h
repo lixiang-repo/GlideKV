@@ -230,7 +230,9 @@ public:
                         .Name(config.prometheus_name)
                         .Help(config.description)
                         .Register(*instance.registry_);
-                    instance.histograms_[config.name] = &histogram_family.Add({}, config.buckets);
+                    // 使用 prometheus::Histogram::BucketBoundaries 来创建分桶边界
+                    prometheus::Histogram::BucketBoundaries buckets(config.buckets);
+                    instance.histograms_[config.name] = &histogram_family.Add({}, buckets);
                     break;
                 }
                 case MetricType::LABEL_COUNTER: {
@@ -476,6 +478,7 @@ inline void PrintSecurityRecommendations() {
     std::cout << "8. ✅ Consider using TLS/HTTPS for metrics transport" << std::endl;
     std::cout << std::endl;
 }
+
 
 } // namespace lookup
 } // namespace tensorflow
