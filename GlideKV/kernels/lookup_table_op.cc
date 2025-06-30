@@ -116,7 +116,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     if (__builtin_expect(num_keys == 0, 0)) {
         return OkStatus();
     }
-
+    
     // 第一步：从缓存中查找
     // 创建key到index的映射 - 使用线程安全的容器
     std::unordered_map<K, size_t> key_to_idx;
@@ -130,6 +130,9 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     for (size_t i = 0; i < num_keys; ++i) {
       const K key_val = key_flat(i);
       key_to_idx[key_val] = i;
+
+      GLIDEKV_METRIC_LABEL_COUNTER_WITH_VALUE(SLOT_ID_TOTAL_KEYS, std::to_string(key_val >> 48), 1, random_value);
+
       // 检查缓存
       if (cache_->contains(key_val)) {
         cache_hit_keys.push_back(key_val);
@@ -229,7 +232,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         
         const K key_val = as_integer_getorelse((as_integer*)record->key.valuep, -1);
         
-	if (record->result == AEROSPIKE_OK) {
+        if (record->result == AEROSPIKE_OK) {
             // 使用哈希表查找 - key_to_idx现在是只读的，线程安全
             auto it = key_to_idx.find(key_val);
             if (it != key_to_idx.end()) {

@@ -221,7 +221,15 @@ namespace MetricConfigs {
         {}
     };
 
-        static const MetricConfig SLOT_ID_FAILED_KEYS = {
+    static const MetricConfig SLOT_ID_TOTAL_KEYS = {
+        "SLOT_ID_TOTAL_KEYS", 
+        MetricType::LABEL_COUNTER_WITH_VALUE, 
+        "glidekv_aerospike_slot_id_total_keys", 
+        "Total number of keys that requested during lookup operations by slot id - 用于计算失败率和错误分析（兼容性指标）", 
+        {}
+    };
+
+    static const MetricConfig SLOT_ID_FAILED_KEYS = {
         "SLOT_ID_FAILED_KEYS", 
         MetricType::LABEL_COUNTER_WITH_VALUE, 
         "glidekv_aerospike_slot_id_failed_keys", 
