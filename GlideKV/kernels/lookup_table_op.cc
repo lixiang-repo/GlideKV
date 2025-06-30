@@ -126,11 +126,20 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     cache_miss_keys.reserve(num_keys);
     cache_hit_keys.reserve(num_keys);
 
+    std::unordered_map<std::string, int64_t> slot_id_total_keys;
+
     for (size_t i = 0; i < num_keys; ++i) {
       const K key_val = key_flat(i);
       key_to_idx[key_val] = i;
 
-      GLIDEKV_METRIC_LABEL_COUNTER_WITH_VALUE(SLOT_ID_TOTAL_KEYS, std::to_string(key_val >> 48), 1, random_value);
+      // GLIDEKV_METRIC_LABEL_COUNTER_WITH_VALUE(SLOT_ID_TOTAL_KEYS, std::to_string(key_val >> 48), 1, random_value);
+      std::string slot_id_str = std::to_string(key_val >> 48);
+      auto it = slot_id_total_keys.find(slot_id_str);
+      if (it != slot_id_total_keys.end()) {
+        slot_id_total_keys[slot_id_str] = it->second + 1;
+      } else {
+        slot_id_total_keys[slot_id_str] = 1;
+      }
 
       // 检查缓存
       if (cache_->contains(key_val)) {
@@ -138,9 +147,13 @@ class HashTableOfTensors final : public LookupInterfaceStub {
       } else {
         // 缓存未命中，添加到需要从Aerospike查询的列表
         cache_miss_keys.push_back(key_val);
-        
       }
     }
+
+    for (auto& [slot_id_str, count] : slot_id_total_keys) {
+      GLIDEKV_METRIC_LABEL_COUNTER_WITH_VALUE(SLOT_ID_TOTAL_KEYS, slot_id_str, count, random_value);
+    }
+
     auto& worker_threads = *ctx->device()->tensorflow_cpu_worker_threads();
     uint32_t num_worker_threads = worker_threads.num_threads;
     
