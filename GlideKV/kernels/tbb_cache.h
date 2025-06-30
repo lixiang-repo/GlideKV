@@ -114,7 +114,8 @@ public:
         }
 
         typename tbb::concurrent_hash_map<K, std::vector<V>>::const_accessor accessor;
-        return cache_.find(accessor, key);
+        bool found = cache_.find(accessor, key);
+        return found;
     }
     
     /**
@@ -172,12 +173,9 @@ public:
 
         std::vector<V> vector_data;
         int64_t value_dim = value_flat.dimension(1);
-        vector_data.reserve(value_dim);
+        vector_data.resize(value_dim);  // 使用resize而不是reserve，确保vector有正确的size
         std::copy(value_flat.data() + idx * value_dim, value_flat.data() + (idx + 1) * value_dim, vector_data.begin());
-        
-        // std::cout << "vector_data.size() = " << vector_data.size() << std::endl;
-        // std::cout << "value_flat.data() + idx * value_dim = " << value_flat.data() + idx * value_dim << std::endl;
-        // std::cout << "value_flat.data() + (idx + 1) * value_dim = " << value_flat.data() + (idx + 1) * value_dim << std::endl;
+
         insert(key, vector_data);
 
     }

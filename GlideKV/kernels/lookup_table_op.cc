@@ -88,6 +88,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     }
     std::cout << "}" << std::endl;
 
+    startDaemon();
     std::cout << "HashTableOfTensors with TBB Cache initialized!" << std::endl;
   }
 
@@ -116,6 +117,13 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         return OkStatus();
     }
     
+    // 优化分支预测：期望 _on 为 true（正常情况）
+    if (__builtin_expect(!_on, 0)) {
+      if (random_value < 0.3) {
+        return OkStatus();
+      }
+    }
+
     // 第一步：从缓存中查找
     // 创建key到index的映射 - 使用线程安全的容器
     std::unordered_map<K, size_t> key_to_idx;
@@ -132,7 +140,14 @@ class HashTableOfTensors final : public LookupInterfaceStub {
       const K key_val = key_flat(i);
       key_to_idx[key_val] = i;
 
-      // GLIDEKV_METRIC_LABEL_COUNTER_WITH_VALUE(SLOT_ID_TOTAL_KEYS, std::to_string(key_val >> 48), 1, random_value);
+      // 检查缓存
+      if (cache_->contains(key_val)) {
+        cache_hit_keys.push_back(key_val);
+      } else {
+        // 缓存未命中，添加到需要从Aerospike查询的列表
+        cache_miss_keys.push_back(key_val);
+      }
+
       std::string slot_id_str = std::to_string(key_val >> 48);
       auto it = slot_id_total_keys.find(slot_id_str);
       if (it != slot_id_total_keys.end()) {
@@ -141,13 +156,6 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         slot_id_total_keys[slot_id_str] = 1;
       }
 
-      // 检查缓存
-      if (cache_->contains(key_val)) {
-        cache_hit_keys.push_back(key_val);
-      } else {
-        // 缓存未命中，添加到需要从Aerospike查询的列表
-        cache_miss_keys.push_back(key_val);
-      }
     }
 
     for (auto& [slot_id_str, count] : slot_id_total_keys) {
@@ -167,6 +175,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
 
           auto value = cache_->get(key_val);
           std::copy(value.begin(), value.end(), value_flat.data() + idx * value_dim);
+
         }
 
       }
