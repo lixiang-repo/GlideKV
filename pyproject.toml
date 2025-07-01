@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "GlideKV"
+dynamic = ["version"]
+description = "GlideKV with TensorFlow custom operations"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "lixiang", email = "183570397@qq.com"},
+]
+maintainers = [
+    {name = "lixiang", email = "183570397@qq.com"},
+]
+keywords = ["tensorflow", "GlideKV", "custom operations", "machine learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "tensorflow>=2.15.1",
+    "numpy>=1.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=2.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=0.950",
+]
+
+[tool.setuptools_scm]
+write_to = "GlideKV/_version.py"
+
+[tool.setuptools]
+packages = ["GlideKV"]
+package-data = {GlideKV = ["*.so", "*.py"]}
+include-package-data = true
+zip-safe = false 

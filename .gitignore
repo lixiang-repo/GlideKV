@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Bazel
+bazel-*
+.bazelrc.user
+.bazelversion
+bazel-bin/
+bazel-out/
+bazel-testlogs/
+bazel-workspace/
+bazel-execroot/
+bazel-cache/
+bazel-shared/
+bazel-distdir/
+bazel-release/
+bazel-tmp/
+bazel.log
+bazel.*
+bazel.rc
+
+# VSCode/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CMake/Make
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+.cache
+
+serving
+tensorflow
+tensorflow_serving
+third_party
+third_party/boost/
+third_party/darts_clone/
+third_party/icu/
+third_party/libevent/
+third_party/rapidjson/
+third_party/sentencepiece/
+third_party/tf_decision_forests/
+third_party/tf_text/
+
+build_deps
+core*
+tmp

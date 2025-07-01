@@ -1,0 +1,35 @@
+# Include README and documentation
+include README.md
+include LICENSE
+
+# Include Python source files
+recursive-include GlideKV *.py
+recursive-include GlideKV *.so
+
+# Include Bazel build files (for development only)
+include WORKSPACE
+include BUILD
+include .bazelrc
+include tf_framework_repo.bzl
+recursive-include GlideKV BUILD
+
+# Include test files
+include configure.py
+
+# Include third party dependencies
+recursive-include third_party *
+recursive-include tensorflow_serving *
+
+# Exclude unnecessary files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude .git*
+global-exclude .DS_Store
+global-exclude *.swp
+global-exclude *.swo
+global-exclude *~
+global-exclude bazel-*
+global-exclude .bazel*
+exclude GlideKV/BUILD 
