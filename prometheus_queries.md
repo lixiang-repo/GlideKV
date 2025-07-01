@@ -105,7 +105,7 @@ sum(increase(glidekv_aerospike_cache_hit_keys[5m])) / sum(increase(glidekv_aeros
 
 ```promql
 # 查找操作失败率
-sum(increase(glidekv_aerospike_lookup_failures_total[5m])) / sum(increase(glidekv_aerospike_lookup_latency_histogram_count[5m]))
+sum(increase(glidekv_aerospike_lookup_failures_total[5m])) / sum(increase(glidekv_aerospike_total_latency_histogram_count[5m]))
 
 # 连接失败次数
 increase(glidekv_aerospike_connection_failures_total[5m])
