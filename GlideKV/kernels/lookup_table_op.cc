@@ -86,6 +86,11 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "version", &version));
     cache_ = std::make_unique<TBBCache<K, V>>(version, static_cast<size_t>(value_shape_.dim_size(0)));
 
+    // 启动daemon
+    std::string tag;
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "tag", &tag));
+    startDaemon(tag);
+
     std::cout << "HashTableOfTensors with TBB Cache initialized!" << std::endl;
   }
 
@@ -96,13 +101,19 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     double random_value = ThreadLocalRandomGenerator::GetRandomValue();
     
     auto value_flat = value->flat_inner_dims<V, 2>();
-    auto value_dim = value_flat.dimension(1);
+    auto value_dim = static_cast<size_t>(value_shape_.dim_size(0));
 
     // 早期退出检查 - 优化分支预测
     if (__builtin_expect(!reader_->connected_, 0)) {
         std::cerr << "Not connected to Aerospike" << std::endl;
         GLIDEKV_METRIC_INCREMENT(CONNECTION_FAILURES_TOTAL, 1, random_value);
         return OkStatus();
+    }
+    // 优化分支预测：期望 _on 为 true（正常情况）
+    if (__builtin_expect(!_on.load(std::memory_order_acquire), 0)) {
+      if (random_value < 0.3) {
+        return OkStatus();
+      }
     }
     
     const auto key_flat = key.flat<K>();
@@ -128,7 +139,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
 
       // 检查缓存
       auto value_ptr = cache_->get(key_val);
-      if (value_ptr && value_ptr->size() == static_cast<size_t>(value_dim)) {
+      if (value_ptr && value_ptr->size() == value_dim) {
         cache_hit_keys.push_back(key_val);
       } else {
         // 缓存未命中，添加到需要从Aerospike查询的列表
@@ -214,7 +225,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
             const size_t idx = it->second;
 
             auto value_ptr = cache_->get(key_val);
-            if (value_ptr && value_ptr->size() == static_cast<size_t>(value_dim)) {
+            if (value_ptr && value_ptr->size() == value_dim) {
               std::copy(value_ptr->begin(), value_ptr->end(), value_flat.data() + idx * value_dim);
             } else {
               std::cerr << "value size: " << (value_ptr ? value_ptr->size() : 0) << " is not equal to value_dim: " << value_dim << std::endl;
