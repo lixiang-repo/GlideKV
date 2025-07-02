@@ -27,6 +27,7 @@ srcs = [
     "kernels/aerospike_reader.cc",
     "kernels/aerospike_reader.h",
     "ops/lookup_ops.cc",
+    "kernels/data_loader.h",
 ]
 
 deps = [

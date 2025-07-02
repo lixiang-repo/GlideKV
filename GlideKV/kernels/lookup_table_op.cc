@@ -64,29 +64,27 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         errors::InvalidArgument("Default value must be a vector, got shape ",
                                 value_shape_.DebugString()));
 
-    int64_t max_size;
-    std::vector<int64_t> slot_index;
-    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "max_size", &max_size));
-    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "slot_index", &slot_index));
-    std::set<int64_t> slot_index_set(slot_index.begin(), slot_index.end());
-
     // 初始化 GlideKV Prometheus metrics - 优雅处理端口冲突
     // 注意：SystemMonitor 会在 Prometheus 指标初始化时自动启动
     InitializeGlideKVPrometheusMetrics("127.0.0.1:8080");
 
     // AerospikeReader 初始化 - 使用智能指针
-    reader_ = std::make_unique<AerospikeReader<K, V>>();
+    std::string host;
+    int port;
+    std::string namespace_name;
+    std::string set;
+    std::string field_name;
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "host", &host));
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "port", &port));
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "namespace", &namespace_name));
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "set", &set));
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "field_name", &field_name));
+    reader_ = std::make_unique<AerospikeReader<K, V>>(host, port, namespace_name, set, field_name);
 
-    // 初始化TBB cache - 设置缓存容量为10GB，支持slot
-    cache_ = std::make_unique<TBBCache<K, V>>(max_size, slot_index_set);
-
-    std::cout << "TBB Cache initialized with init_capacity: " << max_size << std::endl;
-    std::cout << "Cache slot index: {";
-    for (size_t i = 0; i < slot_index.size(); ++i) {
-        if (i > 0) std::cout << ", ";
-        std::cout << slot_index[i];
-    }
-    std::cout << "}" << std::endl;
+    // 初始化TBB cache - 设置缓存维度
+    std::string version;
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "version", &version));
+    cache_ = std::make_unique<TBBCache<K, V>>(version, static_cast<size_t>(value_shape_.dim_size(0)));
 
     std::cout << "HashTableOfTensors with TBB Cache initialized!" << std::endl;
   }
@@ -106,7 +104,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         GLIDEKV_METRIC_INCREMENT(CONNECTION_FAILURES_TOTAL, 1, random_value);
         return OkStatus();
     }
-
+    
     const auto key_flat = key.flat<K>();
     const size_t num_keys = key_flat.size();
     // 第一步：从缓存中查找
@@ -130,7 +128,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
 
       // 检查缓存
       auto value_ptr = cache_->get(key_val);
-      if (value_ptr && value_ptr->size() == value_dim) {
+      if (value_ptr && value_ptr->size() == static_cast<size_t>(value_dim)) {
         cache_hit_keys.push_back(key_val);
       } else {
         // 缓存未命中，添加到需要从Aerospike查询的列表
@@ -216,7 +214,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
             const size_t idx = it->second;
 
             auto value_ptr = cache_->get(key_val);
-            if (value_ptr && value_ptr->size() == value_dim) {
+            if (value_ptr && value_ptr->size() == static_cast<size_t>(value_dim)) {
               std::copy(value_ptr->begin(), value_ptr->end(), value_flat.data() + idx * value_dim);
             } else {
               std::cerr << "value size: " << (value_ptr ? value_ptr->size() : 0) << " is not equal to value_dim: " << value_dim << std::endl;
@@ -247,9 +245,6 @@ class HashTableOfTensors final : public LookupInterfaceStub {
                 const int64_t cache_miss_idx = it->second;
                 
                 reader_->extract_vector_from_record(&record->record, cache_miss_idx, value_flat);
-                
-                // 将数据存储到缓存中
-                cache_->insert_with_idx(key_val, cache_miss_idx, value_flat);
                 
             }
         } else {

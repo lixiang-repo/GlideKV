@@ -94,9 +94,12 @@ class HashTable(LookupInterface):
   """
 
   def __init__(self,
+               host,
+               port,
+               namespace,
+               set,
+               field_name,
                dim,
-               slot_index,
-               max_size=127975420,
                key_dtype=tf.int64,
                value_dtype=tf.float32,
                name="HashTable"):
@@ -115,8 +118,12 @@ class HashTable(LookupInterface):
       A `HashTable` object.
     """
 
-    self._max_size = max_size
-    self._slot_index = slot_index
+    self._host = host
+    self._port = port
+    self._namespace = namespace
+    self._set = set
+    self._field_name = field_name
+
     self._default_value = ops.convert_to_tensor([0.0] * dim, dtype=value_dtype)
     self._value_shape = self._default_value.get_shape()
     self._key_dtype = key_dtype
@@ -138,11 +145,14 @@ class HashTable(LookupInterface):
     # explicitly specified.
     table_ref = _ops.hash_table_of_tensors(
         shared_name=self._shared_name,
-        max_size=self._max_size,
-        slot_index=self._slot_index,
         key_dtype=self._key_dtype,
         value_dtype=self._value_dtype,
         value_shape=self._default_value.get_shape(),
+        host=self._host,
+        port=self._port,
+        namespace=self._namespace,
+        set=self._set,
+        field_name=self._field_name,
         name=self._name)
 
     if context.executing_eagerly():

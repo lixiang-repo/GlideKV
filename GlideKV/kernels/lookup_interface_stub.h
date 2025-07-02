@@ -12,7 +12,7 @@ namespace lookup {
 // Stub base class for LookupInterface, implements no-op or default methods
 class LookupInterfaceStub : public LookupInterface {
  public:
-  std::atomic<bool> initialized_ = false;
+  std::atomic<bool> initialized_{false};
 
  public:
   size_t size() const override { return 0; }

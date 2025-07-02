@@ -172,8 +172,11 @@ REGISTER_OP("HashTableOfTensors")
     .Attr("key_dtype: type")
     .Attr("value_dtype: type")
     .Attr("value_shape: shape = {}")
-    .Attr("max_size: int = 127975420")
-    .Attr("slot_index: list(int)")
+    .Attr("host: string = 'localhost'")
+    .Attr("port: int = 3000")
+    .Attr("namespace: string = 'test'")
+    .Attr("set: string = 'vectors'")
+    .Attr("field_name: string = 'vector'")
     .SetIsStateful()
     .SetShapeFn(GlideKVHashTableOfTensorsShapeFn);
 

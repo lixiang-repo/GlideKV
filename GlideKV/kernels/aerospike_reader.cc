@@ -13,12 +13,45 @@
 template<typename K, typename V>
 AerospikeReader<K, V>::AerospikeReader() {
     aerospike_init(&as_, NULL);
-    loadConfigFromEnv(); // 从环境变量加载配置
+    // 从环境变量读取配置参数，如果不存在则使用默认值
+    const char* host_env = std::getenv("AEROSPIKE_HOST");
+    host_ = host_env ? std::string(host_env) : "localhost";
+    
+    const char* port_env = std::getenv("AEROSPIKE_PORT");
+    port_ = port_env ? std::atoi(port_env) : 3000;
+    
+    const char* namespace_env = std::getenv("AEROSPIKE_NAMESPACE");
+    namespace_ = namespace_env ? std::string(namespace_env) : "test";
+    
+    const char* set_env = std::getenv("AEROSPIKE_SET");
+    set_ = set_env ? std::string(set_env) : "vectors";
+    
+    const char* field_env = std::getenv("AEROSPIKE_FIELD");
+    field_name_ = field_env ? std::string(field_env) : "vector";
     
     // 初始化缓存的字符串常量
     namespace_cstr_ = namespace_.c_str();
     set_cstr_ = set_.c_str();
     field_name_cstr_ = field_name_.c_str();
+    
+    init();
+}
+
+template<typename K, typename V>
+AerospikeReader<K, V>::AerospikeReader(const std::string& host, int port, const std::string& namespace_name, const std::string& set, const std::string& field_name) {
+    aerospike_init(&as_, NULL);
+    // loadConfigFromEnv(); // 从环境变量加载配置
+    
+    host_ = host;
+    port_ = port;
+    namespace_ = namespace_name;
+    set_ = set;
+    field_name_ = field_name;
+
+    // 初始化缓存的字符串常量
+    namespace_cstr_ = namespace_name.c_str();
+    set_cstr_ = set.c_str();
+    field_name_cstr_ = field_name.c_str();
     
     init();
 }
