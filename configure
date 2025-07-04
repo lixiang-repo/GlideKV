@@ -16,22 +16,27 @@ export TAG="GlideKV-v1"
 
 # rm -rf ${dirname}/tensorflow_serving ${dirname}/third_party
 git checkout WORKSPACE .bazelrc
-cd serving && git checkout WORKSPACE .bazelrc && cd ..
 # Clone TensorFlow Serving if not exists
 if [ ! -d "serving" ]; then
     sudo apt-get update && sudo apt-get install -y libtool
-    echo "📥 Cloning TensorFlow Serving repository..."
+    echo "ðŸ“¥ Cloning TensorFlow Serving repository..."
     git clone https://github.com/tensorflow/serving.git
     cd ${dirname}/serving
     git checkout ${TF_SERVING_VERSION}
 
     cp -r ${dirname}/serving/tensorflow_serving ${dirname}
     cp -r ${dirname}/serving/third_party ${dirname}
-    cp -r ${dirname}/build_deps ${dirname}
+    # cp -r ${dirname}/build_deps ${dirname}
 
 else
-    echo "✓ TensorFlow Serving repository already exists"
+    cd serving && git checkout WORKSPACE .bazelrc tensorflow_serving/servables/tensorflow/saved_model_warmup_util.cc && cd ..
+    echo "âœ“ TensorFlow Serving repository already exists"
 fi
+
+target_string="TF_RETURN_IF_ERROR(status);"
+sed -i "/$target_string/a \\
+  setenv(\"WARMUP_PATH\", warmup_path.c_str(), 1); \\
+  " ${dirname}/serving/tensorflow_serving/servables/tensorflow/saved_model_warmup_util.cc
 
 tail -n +2 ${dirname}/serving/WORKSPACE >> ${dirname}/WORKSPACE
 cat ${dirname}/serving/.bazelrc >> ${dirname}/.bazelrc

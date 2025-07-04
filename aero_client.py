@@ -63,18 +63,12 @@ def test():
 def main():
     """主函数"""
     print("=== Aerospike 数据验证工具 ===")
-    
-    # 连接
     client = connect_to_aerospike()
-    if not client:
-        sys.exit(1)
-    
-    for i in range(10):
-        key_val = i
-        vector_data = get_vector(key_val, client)
-        print(vector_data)
+    ids = random_vector();
+    for i in range(1, 10):
+        e = get_vector([i], client)
+        print(e)
 
     client.close()
-
 if __name__ == "__main__":
     main() 

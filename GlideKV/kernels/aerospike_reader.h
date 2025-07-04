@@ -1,11 +1,8 @@
 #pragma once
 
 #include <string>
-#include <memory>
-#include <cstdlib>
-#include "tensorflow/core/framework/tensor.h"
 #include <atomic>
-#include <vector>
+#include "tensorflow/core/framework/tensor.h"
 
 // SIMD优化支持
 #ifdef __SSE2__
@@ -51,31 +48,9 @@ public:
     
     aerospike as_;
     
-    // 性能优化配置
-    static constexpr uint32_t UNROLL_FACTOR = 8;  // 循环展开因子
-    
     AerospikeReader();
     AerospikeReader(const std::string& host, int port, const std::string& namespace_name, const std::string& set, const std::string& field_name);
     ~AerospikeReader();
-    
-    // // 从环境变量读取配置参数
-    // void loadConfigFromEnv() {
-    //     // 从环境变量读取配置参数，如果不存在则使用默认值
-    //     const char* host_env = std::getenv("AEROSPIKE_HOST");
-    //     host_ = host_env ? std::string(host_env) : "localhost";
-        
-    //     const char* port_env = std::getenv("AEROSPIKE_PORT");
-    //     port_ = port_env ? std::atoi(port_env) : 3000;
-        
-    //     const char* namespace_env = std::getenv("AEROSPIKE_NAMESPACE");
-    //     namespace_ = namespace_env ? std::string(namespace_env) : "test";
-        
-    //     const char* set_env = std::getenv("AEROSPIKE_SET");
-    //     set_ = set_env ? std::string(set_env) : "vectors";
-        
-    //     const char* field_env = std::getenv("AEROSPIKE_FIELD");
-    //     field_name_ = field_env ? std::string(field_env) : "vector";
-    // }
     
     void init();
     
@@ -83,9 +58,6 @@ public:
 
     void close();
 
-    void extract_vector_from_record(as_record* record, int idx, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat);
-    
-    // 向量提取函数
-    void extract_vector_from_list(as_list* list, int idx, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat);
+    void extract_vector_from_record(as_record* record, int idx, int dim, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat);
     
 }; 

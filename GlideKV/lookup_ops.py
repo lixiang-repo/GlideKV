@@ -94,12 +94,12 @@ class HashTable(LookupInterface):
   """
 
   def __init__(self,
+               dim,
                host,
                port,
                namespace,
-               set,
+               set_name,
                field_name,
-               dim,
                key_dtype=tf.int64,
                value_dtype=tf.float32,
                name="HashTable"):
@@ -109,23 +109,27 @@ class HashTable(LookupInterface):
     and value_dtype, respectively.
 
     Args:
+      dim: embedding dimension
+      host: host
+      port: port
+      namespace: namespace
+      set_name: set_name
+      field_name: field name
       key_dtype: the type of the key tensors.
       value_dtype: the type of the value tensors.
-      dim: embedding dimension
       name: A name for the operation (optional).
 
     Returns:
       A `HashTable` object.
     """
-
+    self._dim = dim
     self._host = host
     self._port = port
     self._namespace = namespace
-    self._set = set
+    self._set_name = set_name
     self._field_name = field_name
 
-    self._default_value = ops.convert_to_tensor([0.0] * dim, dtype=value_dtype)
-    self._value_shape = self._default_value.get_shape()
+    self._default_value = ops.convert_to_tensor([0.0] * self._dim, dtype=value_dtype)
     self._key_dtype = key_dtype
     self._value_dtype = value_dtype
     self._name = name
@@ -151,7 +155,7 @@ class HashTable(LookupInterface):
         host=self._host,
         port=self._port,
         namespace=self._namespace,
-        set=self._set,
+        set_name=self._set_name,
         field_name=self._field_name,
         name=self._name)
 
@@ -165,7 +169,7 @@ class HashTable(LookupInterface):
   def name(self):
     return self._table_name
 
-  def lookup(self, keys, dynamic_default_values=None, name=None):
+  def lookup(self, keys, name=None):
     """Looks up `keys` in a table, outputs the corresponding values.
 
     The `_default_value` is used for keys not present in the table.
@@ -173,23 +177,6 @@ class HashTable(LookupInterface):
     Args:
       keys: Keys to look up. Can be a tensor of any shape. Must match the
         table's key_dtype.
-      dynamic_default_values: The values to use if a key is missing in the
-        table. If None (by default), the `table._default_value` will be used.
-        Shape of `dynamic_default_values` must be same with
-        `table._default_value` or the lookup result tensor.
-        In the latter case, each key will have a different default value.
-
-        For example:
-
-          ```python
-          keys = [0, 1, 3]
-          dynamic_default_values = [[1, 3, 4], [2, 3, 9], [8, 3, 0]]
-
-          # The key '0' will use [1, 3, 4] as default value.
-          # The key '1' will use [2, 3, 9] as default value.
-          # The key '3' will use [8, 3, 0] as default value.
-          ```
-
       name: A name for the operation (optional).
 
     Returns:
@@ -203,9 +190,7 @@ class HashTable(LookupInterface):
                         (self.resource_handle, keys, self._default_value)):
       keys = ops.convert_to_tensor(keys, dtype=self._key_dtype, name="keys")
       with ops.colocate_with(self.resource_handle):
-        values = _ops.lookup_find(
-            self.resource_handle, keys, dynamic_default_values
-            if dynamic_default_values is not None else self._default_value)
+        values = _ops.lookup_find(self.resource_handle, keys, self._default_value)
     return values
 
 

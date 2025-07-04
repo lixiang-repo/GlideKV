@@ -3,20 +3,14 @@
 #define TBB_LRU_CACHE_H
 
 #include <tbb/concurrent_hash_map.h>
-#include <tbb/concurrent_vector.h>
-#include <tbb/task_group.h>
-#include <list>
-#include <shared_mutex>
-#include <mutex>
-#include <set>
-#include <functional>
-#include <vector>
-#include <optional>
 #include <atomic>
 #include <memory>
-#include <filesystem>
-#include "tensorflow/core/framework/tensor.h"
+#include <thread>
+#include <string>
+#include <vector>
+
 #include "data_loader.h"
+#include "version_utils.h"
 
 /**
  * 基于 TBB 的线程安全 缓存实现
@@ -37,7 +31,7 @@
  * 计算公式：
  * - 每个元素大小 = 8(key) + 8(智能指针) + 24(vector对象) + 32(vector数据) + 16(哈希节点) = 88字节
  * - 缓存数据大小 = Key个数 × 88字节
- * - 总内存 = 基础结构 + slot_index_ + 缓存数据大小
+ * - 总内存 = 基础结构 + 缓存数据大小
  * 
  * 注意事项：
  * - 实际内存使用可能略高于理论值（包含TBB内部管理开销）
@@ -49,48 +43,86 @@
 template<typename K, typename V>
 class TBBCache {
 protected:
-    
     tbb::concurrent_hash_map<K, std::unique_ptr<std::vector<V>>> cache_;         // 主缓存：并发哈希表，存储智能指针
     
     size_t dim_;
-    std::string version_;
     std::atomic<bool> initialized_{false};
-
-    void init() {
-        cache_ = tbb::concurrent_hash_map<K, std::unique_ptr<std::vector<V>>>();
-        std::thread load_thread([this]() {
-            load_from_file();
-        });
-        load_thread.detach();
-    }
+    std::atomic<bool> stop_flag_{false};  // 停止标志
 
     void load_from_file() {
-        const std::string& model_base_path = std::string(getenv("MODEL_BASE_PATH"));
-        // std::string model_base_path = "/data";
-        if (model_base_path.empty()) {
-            std::cerr << "MODEL_BASE_PATH is not set" << std::endl;
-            return;
+        LOG(INFO) << "loading tbb cache from file...";
+
+        std::filesystem::path model_path_ = get_model_path();
+        int max_version = get_max_version(model_path_.parent_path().string());
+        std::string model_path = model_path_.string();
+        
+        // 等待模型文件就绪
+        while (!stop_flag_.load(std::memory_order_relaxed) && 
+               (model_path.find(std::to_string(max_version)) == std::string::npos || 
+                !fs::exists(model_path + "/variables/tbb_cache"))) {
+            std::this_thread::sleep_for(std::chrono::seconds(120));
+        
+            model_path_ = get_model_path();
+            max_version = get_max_version(model_path_.parent_path().string());
+            model_path = model_path_.string();
         }
-        std::vector<std::string> files = get_files(model_base_path + "/" + version_, "variables/tbb_cache/sparse_*.gz");
+          
+        LOG(INFO) << "successfully loaded model: " << model_path << " with max_version: " << max_version;
+
+        std::vector<std::string> files = get_files(model_path, "variables/tbb_cache/sparse_*.gz");
+        int64_t total_count = 0;
+        
         for (const auto& file : files) {
-            bool success = load_from_gz_file<K, V>(file, cache_, dim_);
-            if (!success) {
-                cache_.clear();
-                std::cout << "failed to load " << file << std::endl;
+            if (stop_flag_.load(std::memory_order_relaxed)) {
+                LOG(INFO) << "load thread stopped during file loading";
                 return;
             }
+            
+            int64_t count = load_from_gz_file<K, V>(file, cache_, dim_);
+            if (count < 0) {
+                cache_.clear();
+                return;
+            } else {
+                total_count += count;
+            }
         }
-        initialized_.store(true, std::memory_order_relaxed);
+        
+        if (stop_flag_.load(std::memory_order_relaxed)) {
+            LOG(INFO) << "load thread stopped before final initialization";
+        } else if (total_count > 0 && static_cast<int64_t>(cache_.size()) == total_count) {
+            initialized_.store(true, std::memory_order_relaxed);
+            LOG(INFO) << "successfully initialized tbb cache from model path: " << model_path;
+        } else {
+            LOG(INFO) << "failed to initialize tbb cache from model path: " << model_path;
+        }
     }
 
 public:
-    TBBCache(const std::string& version, size_t dim) : version_(version), dim_(dim) {
-        init();
+    TBBCache(size_t dim) : dim_(dim) {
+        cache_ = tbb::concurrent_hash_map<K, std::unique_ptr<std::vector<V>>>();
+        stop_flag_.store(false, std::memory_order_relaxed);
+        
+        // 使用shared_ptr确保对象生命周期
+        auto self_ptr = std::shared_ptr<TBBCache>(this, [](TBBCache*){}); // 自定义删除器，防止重复删除
+        
+        // 启动加载线程并detach，传递shared_ptr
+        std::thread([self_ptr]() {
+            self_ptr->load_from_file();
+        }).detach();
     }
     
     ~TBBCache() {
+        // 设置停止标志
+        stop_flag_.store(true, std::memory_order_relaxed);
+        
+        // 由于使用了detach，不需要join，线程会在后台自动结束
+        initialized_.store(false, std::memory_order_relaxed);
         cache_.clear();
     }
+
+    // 删除拷贝构造函数和赋值操作符
+    TBBCache(const TBBCache&) = delete;
+    TBBCache& operator=(const TBBCache&) = delete;
 
     std::vector<V>* get(const K& key) {
         if (!initialized_.load(std::memory_order_relaxed)) {

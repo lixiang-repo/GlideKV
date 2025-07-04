@@ -1,14 +1,8 @@
-
-
-#include <vector>
 #include <iostream>
+#include "GlideKV/kernels/version_utils.h"
 
 int main() {
-    std::vector<float> vec = {1.0f, 2.0f, 3.0f};
-
-    if (!vec.empty()) {
-        float* ptr = vec.data();  // 推荐方式
-        std::cout << "第一个元素: " << *ptr << std::endl;
-        std::cout << "第一个元素地址: " << ptr << std::endl;
-    }
+    int max_version = get_max_version("/data/model/dnn_winr_v1/export_dir/dense_model");
+    std::cout << "max_version: " << max_version << std::endl;
+    return 0;
 }

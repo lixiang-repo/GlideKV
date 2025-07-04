@@ -5,10 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
-#include "tensorflow/core/framework/tensor.h"
-#include "tensorflow/core/platform/tstring.h"
 #include <type_traits>
-#include "tensorflow/core/util/work_sharder.h"
 
 template<typename K, typename V>
 AerospikeReader<K, V>::AerospikeReader() {
@@ -49,9 +46,9 @@ AerospikeReader<K, V>::AerospikeReader(const std::string& host, int port, const 
     field_name_ = field_name;
 
     // 初始化缓存的字符串常量
-    namespace_cstr_ = namespace_name.c_str();
-    set_cstr_ = set.c_str();
-    field_name_cstr_ = field_name.c_str();
+    namespace_cstr_ = namespace_.c_str();
+    set_cstr_ = set_.c_str();
+    field_name_cstr_ = field_name_.c_str();
     
     init();
 }
@@ -66,11 +63,11 @@ AerospikeReader<K, V>::~AerospikeReader() {
 template<typename K, typename V>
 void AerospikeReader<K, V>::init() {
     std::cout << "Configuration loaded from environment variables:" << std::endl;
-    std::cout << "  Host: " << host_ << " (from AEROSPIKE_HOST)" << std::endl;
-    std::cout << "  Port: " << port_ << " (from AEROSPIKE_PORT)" << std::endl;
-    std::cout << "  Namespace: " << namespace_ << " (from AEROSPIKE_NAMESPACE)" << std::endl;
-    std::cout << "  Set: " << set_ << " (from AEROSPIKE_SET)" << std::endl;
-    std::cout << "  Field: " << field_name_ << " (from AEROSPIKE_FIELD)" << std::endl;
+    std::cout << "  Host: " << host_ << std::endl;
+    std::cout << "  Port: " << port_ << std::endl;
+    std::cout << "  Namespace: " << namespace_ << std::endl;
+    std::cout << "  Set: " << set_ << std::endl;
+    std::cout << "  Field: " << field_name_ << std::endl;
     if (!connect(host_, port_)) {
         std::cerr << "Failed to connect to Aerospike at " << host_ << ":" << port_ << std::endl;
         std::cerr << "Please check:" << std::endl;
@@ -122,16 +119,7 @@ inline V extract_aerospike_value(as_val* v) {
 }
 
 template<typename K, typename V>
-void AerospikeReader<K, V>::extract_vector_from_list(as_list* list, int idx, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat) {
-    uint32_t size = as_list_size(list);
-    if (size == 0) return;
-    for (uint32_t i = 0; i < size; ++i) {
-        value_flat(idx, i) = extract_aerospike_value<V>(as_list_get(list, i));
-    }
-}
-
-template<typename K, typename V>
-void AerospikeReader<K, V>::extract_vector_from_record(as_record* record, int idx, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat) {
+void AerospikeReader<K, V>::extract_vector_from_record(as_record* record, int idx, int dim, decltype(std::declval<tensorflow::Tensor>().flat_inner_dims<V, 2>())& value_flat) {
     if (!record) return;  // 如果record为空，保持默认值不变
     
     uint16_t bin_count = record->bins.size;
@@ -152,7 +140,15 @@ void AerospikeReader<K, V>::extract_vector_from_record(as_record* record, int id
             if (val && as_val_type(val) == AS_LIST) {
                 as_list* list = as_list_fromval(val);
                 if (list) {
-                    extract_vector_from_list(list, idx, value_flat);
+                    uint32_t size = as_list_size(list);
+                    if (size == dim) {
+                        for (uint32_t j = 0; j < size; ++j) {
+                            value_flat(idx, j) = extract_aerospike_value<V>(as_list_get(list, j));
+                        }
+                    } else {
+                        std::cerr << "Invalid dimension: " << dim << " for record " << idx << std::endl;
+                        return;
+                    }
                 }
                 return;  // 找到并处理了字段，退出
             }

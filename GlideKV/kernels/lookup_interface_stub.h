@@ -2,9 +2,11 @@
 #include "tensorflow/core/kernels/lookup_table_op.h"
 #include <ctime>
 #include <string>
-#include <iostream>
 #include <fstream>
-#include <cstdlib>
+#include <thread>
+#include <chrono>
+#include <atomic>
+#include <memory>
 
 namespace tensorflow {
 namespace lookup {
@@ -12,6 +14,7 @@ namespace lookup {
 // Stub base class for LookupInterface, implements no-op or default methods
 class LookupInterfaceStub : public LookupInterface {
  public:
+  std::atomic<bool> _on{true};
   std::atomic<bool> initialized_{false};
 
  public:
@@ -22,6 +25,8 @@ class LookupInterfaceStub : public LookupInterface {
   Status ImportValues(OpKernelContext*, const Tensor&, const Tensor&) override { return OkStatus(); }
   Status ExportValues(OpKernelContext*) override { return OkStatus(); }
   int64_t MemoryUsed() const override { return 0; }
+
+
 
 };
 

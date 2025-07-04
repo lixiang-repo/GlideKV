@@ -175,8 +175,9 @@ REGISTER_OP("HashTableOfTensors")
     .Attr("host: string = 'localhost'")
     .Attr("port: int = 3000")
     .Attr("namespace: string = 'test'")
-    .Attr("set: string = 'vectors'")
+    .Attr("set_name: string = 'vectors'")
     .Attr("field_name: string = 'vector'")
+    .Attr("tag: string = 'ydtx-lookup'")
     .SetIsStateful()
     .SetShapeFn(GlideKVHashTableOfTensorsShapeFn);
 

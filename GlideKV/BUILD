@@ -28,6 +28,7 @@ srcs = [
     "kernels/aerospike_reader.h",
     "ops/lookup_ops.cc",
     "kernels/data_loader.h",
+    "kernels/version_utils.h",
 ]
 
 deps = [
@@ -83,22 +84,12 @@ cc_binary(
     srcs = ["test_shell.cc"]
 )
 
-cc_binary(
+tf_cc_binary(
     name = "test_tbb_cache",
-    srcs = [
-        "kernel_test/test_tbb_cache.cc",
-        "kernels/tbb_cache.h"
-    ],
-    deps = [
-        "@tbb//:tbb",
-    ],
-    copts = [
-        "-O3",
-        "-std=c++17",
-    ],
-    linkopts = [
-        "-lpthread",
-    ],
+    srcs = ["kernel_test/test_tbb_cache.cc"] + srcs,
+    deps = ["@local_tf//:tensorflow_framework"] + deps,
+    copts = ["-D_GLIBCXX_USE_CXX11_ABI=1"] + copts,
+    linkopts = linkopts
 )
 
 

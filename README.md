@@ -47,11 +47,6 @@ docker run -itd \
 ### Environment Variables
 
 - `GLIDEKV_METRICS_ENABLED=1`: Enables Prometheus metrics collection for monitoring
-- `AEROSPIKE_HOST`: Aerospike server host (default: localhost)
-- `AEROSPIKE_PORT`: Aerospike server port (default: 3000)
-- `AEROSPIKE_NAMESPACE`: Aerospike namespace (default: test)
-- `AEROSPIKE_SET`: Aerospike set name (default: vectors)
-- `AEROSPIKE_FIELD`: Aerospike field name (default: vector)
 
 ### Model Requirements
 

@@ -72,26 +72,19 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     std::string host;
     int port;
     std::string namespace_name;
-    std::string set;
+    std::string set_name;
     std::string field_name;
     OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "host", &host));
     OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "port", &port));
     OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "namespace", &namespace_name));
-    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "set", &set));
+    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "set_name", &set_name));
     OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "field_name", &field_name));
-    reader_ = std::make_unique<AerospikeReader<K, V>>(host, port, namespace_name, set, field_name);
+    reader_ = std::make_unique<AerospikeReader<K, V>>(host, port, namespace_name, set_name, field_name);
 
     // 初始化TBB cache - 设置缓存维度
-    std::string version;
-    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "version", &version));
-    cache_ = std::make_unique<TBBCache<K, V>>(version, static_cast<size_t>(value_shape_.dim_size(0)));
+    tbb_cache_ = std::make_unique<TBBCache<K, V>>(static_cast<size_t>(value_shape_.dim_size(0)));
 
-    // 启动daemon
-    std::string tag;
-    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "tag", &tag));
-    startDaemon(tag);
-
-    std::cout << "HashTableOfTensors with TBB Cache initialized!" << std::endl;
+    LOG(INFO) << "HashTableOfTensors with TBB Cache initialized!";
   }
 
   Status Find(OpKernelContext* ctx, const Tensor& key, Tensor* value,
@@ -108,12 +101,6 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         std::cerr << "Not connected to Aerospike" << std::endl;
         GLIDEKV_METRIC_INCREMENT(CONNECTION_FAILURES_TOTAL, 1, random_value);
         return OkStatus();
-    }
-    // 优化分支预测：期望 _on 为 true（正常情况）
-    if (__builtin_expect(!_on.load(std::memory_order_acquire), 0)) {
-      if (random_value < 0.3) {
-        return OkStatus();
-      }
     }
     
     const auto key_flat = key.flat<K>();
@@ -138,7 +125,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
       key_to_idx[key_val] = i;
 
       // 检查缓存
-      auto value_ptr = cache_->get(key_val);
+      auto value_ptr = tbb_cache_->get(key_val);
       if (value_ptr && value_ptr->size() == value_dim) {
         cache_hit_keys.push_back(key_val);
       } else {
@@ -214,17 +201,13 @@ class HashTableOfTensors final : public LookupInterfaceStub {
           // 如果i大于等于num_cache_misses，则从cache_hit_keys中获取key
           // 用缓存填充value_flat
           const size_t cache_hit_idx = i - num_cache_misses;
-          if (cache_hit_idx >= cache_hit_keys.size()) {
-              continue;  // 边界检查
-          }
-          
           const K key_val = cache_hit_keys[cache_hit_idx];
 
           auto it = key_to_idx.find(key_val);
           if (it != key_to_idx.end()) {
             const size_t idx = it->second;
 
-            auto value_ptr = cache_->get(key_val);
+            auto value_ptr = tbb_cache_->get(key_val);
             if (value_ptr && value_ptr->size() == value_dim) {
               std::copy(value_ptr->begin(), value_ptr->end(), value_flat.data() + idx * value_dim);
             } else {
@@ -255,7 +238,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
             if (it != key_to_idx.end()) {
                 const int64_t cache_miss_idx = it->second;
                 
-                reader_->extract_vector_from_record(&record->record, cache_miss_idx, value_flat);
+                reader_->extract_vector_from_record(&record->record, cache_miss_idx, value_dim, value_flat);
                 
             }
         } else {
@@ -299,7 +282,7 @@ class HashTableOfTensors final : public LookupInterfaceStub {
  private:
   TensorShape value_shape_;
   std::unique_ptr<AerospikeReader<K, V>> reader_;
-  std::unique_ptr<TBBCache<K, V>> cache_;
+  std::unique_ptr<TBBCache<K, V>> tbb_cache_;
 };
 
 }  // namespace lookup

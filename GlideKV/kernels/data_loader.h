@@ -4,7 +4,6 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
-#include <unordered_map>
 #include <zlib.h>
 #include <tbb/concurrent_hash_map.h>
 
@@ -53,12 +52,12 @@ inline std::vector<std::string> get_files(const std::string& dir, const std::str
 
 // Load data from gz compressed file where first column is key and remaining columns form a vector
 template<typename K, typename V>
-bool load_from_gz_file(const std::string& filename, tbb::concurrent_hash_map<K, std::unique_ptr<std::vector<V>>>& data, size_t dim=8) {
+int64_t load_from_gz_file(const std::string& filename, tbb::concurrent_hash_map<K, std::unique_ptr<std::vector<V>>>& data, size_t dim=8) {
     gzFile file = gzopen(filename.c_str(), "r");
     
     if (!file) {
         std::cerr << "Error: Could not open gz file " << filename << std::endl;
-        return false;
+        return -1;
     }
     
     char buffer[4096];
@@ -98,16 +97,16 @@ bool load_from_gz_file(const std::string& filename, tbb::concurrent_hash_map<K, 
             }
         }
     }
+    gzclose(file);
     
-    std::string line_file = file_pattern_replace(filename, ".gz", "_line.txt");
+    std::string line_file = file_pattern_replace(filename, ".gz", "_line_check.txt");
     int64_t line_count = load_int_from_file(line_file);
-    if (line_count != count) {
-        std::cout << "file: " << filename << " has " << count << " keys, but " << line_count << " lines in " << line_file << std::endl;
+    if (count > 0 && count == line_count) {
+        LOG(INFO) << "successfully loaded " << count << " keys from " << filename;
+        return count;
     } else {
-        std::cout << "successfully loaded " << count << " keys from " << filename << std::endl;
+        LOG(INFO) << "file: " << filename << " has " << count << " keys, but " << line_count << " lines in " << line_file;
+        return -1;
     }
     
-    gzclose(file);
-
-    return line_count == count;
 }
