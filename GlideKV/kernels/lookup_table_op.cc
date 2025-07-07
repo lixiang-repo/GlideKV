@@ -84,11 +84,6 @@ class HashTableOfTensors final : public LookupInterfaceStub {
     // 初始化TBB cache - 设置缓存维度
     tbb_cache_ = std::make_unique<TBBCache<K, V>>(static_cast<size_t>(value_shape_.dim_size(0)));
 
-    // 启动daemon
-    std::string tag;
-    OP_REQUIRES_OK(ctx, GetNodeAttr(kernel->def(), "tag", &tag));
-    startDaemon(tag);
-
     LOG(INFO) << "HashTableOfTensors with TBB Cache initialized!";
   }
 
