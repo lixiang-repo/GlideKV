@@ -5,7 +5,6 @@ A high-performance GlideKV library featuring custom TensorFlow operations, writt
 ## Features
 - 🚀 **Custom TensorFlow Ops**: High-performance C++ ops for advanced GlideKV tasks
 - 🛠️ **Bazel Build**: Reproducible, robust, and scalable build system
-- 🐍 **Python API**: Easy-to-use Python interface for integration with ML workflows
 - 🔄 **Automatic Environment Detection**: Automatically finds and links your TensorFlow installation
 - 📦 **Wheel Packaging**: Easily build and distribute as a Python wheel
 - 🔧 **TensorFlow Serving**: Production-ready model serving capabilities
