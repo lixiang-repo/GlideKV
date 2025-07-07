@@ -39,7 +39,7 @@ docker run -itd \
 | `-p 8501:8501` | REST API port | 8501 |
 | `-e GLIDEKV_METRICS_ENABLED=1` | Enable GlideKV metrics collection | 0 |
 | `-v /data:/data` | Mount local data directory | - |
-| `--privileged=true` | Enable privileged mode for custom ops | false |
+| `--privileged=true` | Enable privileged mode | false |
 | `--network=host` | Use host network mode | bridge |
 | `--file_system_poll_wait_seconds=10` | Model polling interval | 10 |
 | `--model_base_path` | Path to the TensorFlow model | - |
