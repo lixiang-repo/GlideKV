@@ -57,12 +57,18 @@ protected:
         int max_version = get_max_version(fs_model_path.parent_path().string());
         
         // 等待模型文件就绪
-        while ((model_path.find(std::to_string(max_version)) == std::string::npos || 
+        int wait_count = 0;
+        const int max_wait_count = 60; // 5分钟 = 60 * 5秒 
+        while (wait_count < max_wait_count && (model_path.find(std::to_string(max_version)) == std::string::npos || 
                 !fs::exists(model_path + "/variables/tbb_cache"))) {
             if (stop_flag_.load(std::memory_order_relaxed)) {
                 return;
             }
-            std::this_thread::sleep_for(std::chrono::seconds(60));
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            wait_count++;
+            if (wait_count % 12 == 0) { // 每分钟打印一次日志 
+                LOG(INFO) << "Still waiting for tbb cache file: " << model_path << " (waited " << (wait_count * 5) << " seconds)"; 
+            }
         
             fs_model_path = get_model_path();
             model_path = fs_model_path.string();

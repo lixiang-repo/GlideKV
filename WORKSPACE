@@ -30,7 +30,7 @@ prometheus_cpp_repositories()
 git_repository(
     name = "aerospike_client_c",
     remote = "https://github.com/aerospike/aerospike-client-c.git",
-    commit = "354a1283",  # 使用7.0.4版本的commit hash
+    commit = "4f0187bb471f785e7fe1db0d867bba4598edecde",  # 使用7.0.4版本的commit hash
     init_submodules = True,  # 初始化子模块
     build_file = "//third_party_glidekv:aerospike_client_c.BUILD",
 )

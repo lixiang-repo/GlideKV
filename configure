@@ -14,11 +14,10 @@ fi
 export TF_SERVING_VERSION="r2.15"
 export TAG="GlideKV-v1"
 
-# rm -rf ${dirname}/tensorflow_serving ${dirname}/third_party
+# rm -rf ${dirname}/tensorflow_serving ${dirname}/third_party ${dirname}/serving
 git checkout WORKSPACE .bazelrc
 # Clone TensorFlow Serving if not exists
 if [ ! -d "serving" ]; then
-    sudo apt-get update && sudo apt-get install -y libtool
     echo "ðŸ“¥ Cloning TensorFlow Serving repository..."
     git clone https://github.com/tensorflow/serving.git
     cd ${dirname}/serving
@@ -29,7 +28,9 @@ if [ ! -d "serving" ]; then
     # cp -r ${dirname}/build_deps ${dirname}
 
 else
-    cd serving && git checkout WORKSPACE .bazelrc tensorflow_serving/servables/tensorflow/saved_model_warmup_util.cc && cd ..
+    cd serving
+    git checkout WORKSPACE .bazelrc tensorflow_serving/servables/tensorflow/saved_model_warmup_util.cc tensorflow_serving/servables/tensorflow/saved_model_bundle_factory.cc
+    cd ${dirname}
     echo "âœ“ TensorFlow Serving repository already exists"
 fi
 
@@ -37,6 +38,38 @@ target_string="TF_RETURN_IF_ERROR(status);"
 sed -i "/$target_string/a \\
   setenv(\"WARMUP_PATH\", warmup_path.c_str(), 1); \\
   " ${dirname}/serving/tensorflow_serving/servables/tensorflow/saved_model_warmup_util.cc
+
+# Add .done file check to saved_model_bundle_factory.cc
+# Add necessary includes
+target_string="#include <vector>"
+sed -i "/$target_string/a \\
+#include <filesystem> \\
+" ${dirname}/serving/tensorflow_serving/servables/tensorflow/saved_model_bundle_factory.cc
+
+# 使用更精确的匹配，只在InternalCreateSavedModelBundle函数体中插入
+target_string="bundle->reset(new SavedModelBundle);"
+sed -i "/$target_string/i\\
+  // 检查.done文件，如果不存在则等待 \\
+  std::string done_file = path + \"/.done\"; \\
+  if (!std::filesystem::exists(done_file)) { \\
+    LOG(WARNING) << \"Model directory missing .done file: \" << done_file << \", waiting for it...\"; \\
+    // 等待.done文件出现，最多等待5分钟 \\
+    int wait_count = 0; \\
+    const int max_wait_count = 60; // 5分钟 = 60 * 5秒 \\
+    while (!std::filesystem::exists(done_file) && wait_count < max_wait_count) { \\
+      std::this_thread::sleep_for(std::chrono::seconds(5)); \\
+      wait_count++; \\
+      if (wait_count % 12 == 0) { // 每分钟打印一次日志 \\
+        LOG(INFO) << \"Still waiting for .done file: \" << done_file << \" (waited \" << (wait_count * 5) << \" seconds)\"; \\
+      } \\
+    } \\
+    if (!std::filesystem::exists(done_file)) { \\
+      LOG(ERROR) << \"Timeout waiting for .done file: \" << done_file; \\
+      return tensorflow::errors::NotFound(\"Model not ready: timeout waiting for .done file in \", done_file); \\
+    } \\
+    LOG(INFO) << \"Found .done file, proceeding with model load: \" << done_file; \\
+  } \\
+  " ${dirname}/serving/tensorflow_serving/servables/tensorflow/saved_model_bundle_factory.cc
 
 tail -n +2 ${dirname}/serving/WORKSPACE >> ${dirname}/WORKSPACE
 cat ${dirname}/serving/.bazelrc >> ${dirname}/.bazelrc

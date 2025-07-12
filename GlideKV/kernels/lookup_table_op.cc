@@ -48,6 +48,8 @@ limitations under the License.
 #include "prometheus_metrics.h"
 #include "lookup_interface_stub.h"
 #include "tbb_cache.h"  // 添加TBB cache头文件
+#include <tbb/concurrent_hash_map.h>  // 添加TBB并发哈希表头文件
+
 
 namespace tensorflow {
 namespace lookup {
@@ -102,74 +104,69 @@ class HashTableOfTensors final : public LookupInterfaceStub {
         GLIDEKV_METRIC_INCREMENT(CONNECTION_FAILURES_TOTAL, 1, random_value);
         return OkStatus();
     }
-    
+
     const auto key_flat = key.flat<K>();
     const size_t num_keys = key_flat.size();
-    // 第一步：从缓存中查找
-    // 创建key到index的映射 - 使用线程安全的容器
+    // 第一步：从缓存中查找 - 简化版本，避免复杂的线程安全问题
+    // 对于小批量key，串行处理可能更高效
     std::unordered_map<K, size_t> key_to_idx;
-    key_to_idx.reserve(num_keys);
-
-    std::vector<K> cache_hit_keys;
+    std::vector<std::pair<K, std::vector<V>*>> cache_hits;
     std::vector<K> cache_miss_keys;
-    cache_hit_keys.reserve(num_keys);
+    std::unordered_map<int, int64_t> slot_id_num_keys;
+    
+    key_to_idx.reserve(num_keys);
+    cache_hits.reserve(num_keys);
     cache_miss_keys.reserve(num_keys);
-
-    std::unordered_map<std::string, int64_t> slot_id_num_keys;
-
+    
+    // 串行处理第一阶段：缓存查找和分类
     for (size_t i = 0; i < num_keys; ++i) {
-      const K key_val = key_flat(i);
-      if (key_val <= 0) {
-        continue;
-      }
-      key_to_idx[key_val] = i;
+        const K key_val = key_flat(i);
+        if (key_val <= 0) {
+            continue;
+        }
+        key_to_idx[key_val] = i;
 
-      // 检查缓存
-      auto value_ptr = tbb_cache_->get(key_val);
-      if (value_ptr && value_ptr->size() == value_dim) {
-        cache_hit_keys.push_back(key_val);
-      } else {
-        // 缓存未命中，添加到需要从Aerospike查询的列表
-        cache_miss_keys.push_back(key_val);
-      }
+        // 检查缓存
+        auto value_ptr = tbb_cache_->get(key_val);
+        if (value_ptr && value_ptr->size() == value_dim) {
+            cache_hits.push_back({key_val, value_ptr});
+        } else {
+            // 缓存未命中，添加到需要从Aerospike查询的列表
+            cache_miss_keys.push_back(key_val);
+        }
 
-      std::string slot_id_str = std::to_string(key_val >> 48);
-      auto it = slot_id_num_keys.find(slot_id_str);
-      if (it != slot_id_num_keys.end()) {
-        slot_id_num_keys[slot_id_str] = it->second + 1;
-      } else {
-        slot_id_num_keys[slot_id_str] = 1;
-      }
-
+        int slot_id = key_val >> 48;
+        slot_id_num_keys[slot_id]++;
     }
 
-    for (auto& [slot_id_str, count] : slot_id_num_keys) {
-      GLIDEKV_METRIC_LABEL_COUNTER(SLOT_ID_NUM_KEYS, "slot_id", slot_id_str, count, random_value);
+    for (auto& [slot_id, count] : slot_id_num_keys) {
+      GLIDEKV_METRIC_LABEL_COUNTER(SLOT_ID_NUM_KEYS, "slot_id", std::to_string(slot_id), count, random_value);
     }
 
     // 第二步：从Aerospike批量查询缓存未命中的key
     const size_t num_cache_misses = cache_miss_keys.size();
     
+    // 使用TBB并发哈希表统计失败的slot_id，性能更好
+    tbb::concurrent_hash_map<int, std::atomic<int64_t>> failed_slot_counts;
+    
     // 创建批量读取记录 - 使用RAII确保资源清理
-    as_batch_records records;
+    as_batch_read_records records;
     std::vector<as_batch_read_record*> batch_records;
     // 预分配批量读取记录数组，提高内存局部性
     batch_records.reserve(num_cache_misses);
 
-    // 使用RAII确保as_batch_records_destroy被调用
+    // 使用RAII确保as_batch_read_destroy被调用
     auto cleanup_records = [&records](void*) {
-        as_batch_records_destroy(&records);
+        as_batch_read_destroy(&records);
     };
     std::unique_ptr<void, decltype(cleanup_records)> records_guard(nullptr, cleanup_records);
 
     if (num_cache_misses > 0) {
       // 初始化批量读取记录
-      as_batch_records_inita(&records, num_cache_misses);
+      as_batch_read_inita(&records, num_cache_misses);
       
       // 填充批量读取请求和key映射
-      for (size_t i = 0; i < num_cache_misses; ++i) {
-          const K key_val = cache_miss_keys[i];
-          
+      for(auto& key_val : cache_miss_keys) {
           as_batch_read_record* record = as_batch_read_reserve(&records);
           batch_records.push_back(record);
           as_key_init_int64(&record->key, reader_->namespace_cstr_, reader_->set_cstr_, key_val);
@@ -191,30 +188,21 @@ class HashTableOfTensors final : public LookupInterfaceStub {
       }
 
     }
-
-    auto& worker_threads = *ctx->device()->tensorflow_cpu_worker_threads();
-    uint32_t num_worker_threads = worker_threads.num_threads;
-    
+    // 第三步：使用缓存填充value_flat
     auto shard = [&](uint32_t begin, uint32_t end) {
       for (uint32_t i = begin; i < end; ++i) {
         if (i >= num_cache_misses) {
-          // 如果i大于等于num_cache_misses，则从cache_hit_keys中获取key
+          // 如果i大于等于num_cache_misses
           // 用缓存填充value_flat
           const size_t cache_hit_idx = i - num_cache_misses;
-          const K key_val = cache_hit_keys[cache_hit_idx];
+          const auto& cache_hit = cache_hits[cache_hit_idx];
+          const K key_val = cache_hit.first;
+          auto value_ptr = cache_hit.second;
 
           auto it = key_to_idx.find(key_val);
           if (it != key_to_idx.end()) {
             const size_t idx = it->second;
-
-            auto value_ptr = tbb_cache_->get(key_val);
-            if (value_ptr && value_ptr->size() == value_dim) {
-              std::copy(value_ptr->begin(), value_ptr->end(), value_flat.data() + idx * value_dim);
-            } else {
-              std::cerr << "value size: " << (value_ptr ? value_ptr->size() : 0) << " is not equal to value_dim: " << value_dim << std::endl;
-              GLIDEKV_METRIC_INCREMENT(VALUE_SIZE_NOT_EQUAL_TO_VALUE_FLAT_DIM, 1, random_value);
-            }
-
+            std::copy(value_ptr->begin(), value_ptr->end(), value_flat.data() + idx * value_dim);
           }
           continue;
         }
@@ -241,21 +229,34 @@ class HashTableOfTensors final : public LookupInterfaceStub {
                 reader_->extract_vector_from_record(&record->record, cache_miss_idx, value_dim, value_flat);
                 
             }
-        } else {
-            std::string slot_id_str = std::to_string(key_val >> 48);
-            GLIDEKV_METRIC_LABEL_COUNTER(SLOT_ID_FAILED_KEYS, "slot_id", slot_id_str, 1, random_value);
+        } else if(random_value < GlideKVPrometheusMetricsManager::get_global_sampling_rate()) {
+            int slot_id = key_val >> 48;
+            // 使用TBB并发哈希表 + 原子操作，确保线程安全
+            typename tbb::concurrent_hash_map<int, std::atomic<int64_t>>::accessor acc;
+            failed_slot_counts.insert(acc, slot_id);
+            acc->second.fetch_add(1, std::memory_order_relaxed);
         }
       }
     };
 
     // 优化分片策略 - 更好的负载均衡和缓存效率
-    const uint32_t slice_size = std::max(32U, std::min(256U, static_cast<uint32_t>((cache_miss_keys.size() + cache_hit_keys.size()) / num_worker_threads)));
-    const uint32_t num_slices = ((cache_miss_keys.size() + cache_hit_keys.size()) + slice_size - 1) / slice_size;
-    Shard(num_worker_threads, worker_threads.workers, cache_miss_keys.size() + cache_hit_keys.size(), num_slices, shard);
+    auto& worker_threads = *ctx->device()->tensorflow_cpu_worker_threads();
+    uint32_t num_worker_threads = worker_threads.num_threads;
+    const uint32_t shard_slice_size = std::max(32U, std::min(256U, static_cast<uint32_t>((cache_miss_keys.size() + cache_hits.size()) / num_worker_threads)));
+    const uint32_t shard_num_slices = ((cache_miss_keys.size() + cache_hits.size()) + shard_slice_size - 1) / shard_slice_size;
+    Shard(num_worker_threads, worker_threads.workers, cache_miss_keys.size() + cache_hits.size(), shard_num_slices, shard);
     
-    // 打印统计结果（在Shard执行后）
-    if (cache_hit_keys.size() > 0) {
-        GLIDEKV_METRIC_INCREMENT(CACHE_HIT_KEYS, cache_hit_keys.size(), random_value);
+    // 批量更新Prometheus指标（在Shard执行后）
+    if (cache_hits.size() > 0) {
+        GLIDEKV_METRIC_INCREMENT(CACHE_HIT_KEYS, cache_hits.size(), random_value);
+    }
+    
+    // 批量更新失败的slot统计（确保所有修改都完成）
+    for (auto it = failed_slot_counts.begin(); it != failed_slot_counts.end(); ++it) {
+        int64_t value = it->second.load(std::memory_order_acquire);
+        if (value > 0) {
+            GLIDEKV_METRIC_LABEL_COUNTER(SLOT_ID_FAILED_KEYS, "slot_id", std::to_string(it->first), value, random_value);
+        }
     }
 
     // RAII自动清理资源

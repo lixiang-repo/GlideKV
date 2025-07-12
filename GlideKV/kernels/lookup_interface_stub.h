@@ -26,6 +26,7 @@ class LookupInterfaceStub : public LookupInterface {
   Status ExportValues(OpKernelContext*) override { return OkStatus(); }
   int64_t MemoryUsed() const override { return 0; }
 
+
 };
 
 } // namespace lookup

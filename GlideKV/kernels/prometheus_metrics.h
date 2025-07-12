@@ -92,14 +92,18 @@ public:
     static double get_global_sampling_rate() {
         auto& instance = getInstance();
         if(instance.global_rate_ > 1.0) {
-            const char* env = std::getenv("GLIDEKV_METRICS_SAMPLING_RATE");
-            double rate = 1.0;  // 默认全局采样率为 1.0（100%）
-            if (env) {
-                rate = std::atof(env);
-                // 确保采样率在 [0.0, 1.0] 范围内
-                rate = std::max(0.0, std::min(1.0, rate));
+            if(is_global_metrics_enabled()) {
+                const char* env = std::getenv("GLIDEKV_METRICS_SAMPLING_RATE");
+                double rate = 1.0;  // 默认全局采样率为 1.0（100%）
+                if (env) {
+                    rate = std::atof(env);
+                    // 确保采样率在 [0.0, 1.0] 范围内
+                    rate = std::max(0.0, std::min(1.0, rate));
+                }
+                instance.global_rate_ = rate;
+            } else {
+                instance.global_rate_ = 0.0;
             }
-            instance.global_rate_ = rate;
         }
         return instance.global_rate_;
     }

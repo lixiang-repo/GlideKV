@@ -50,7 +50,7 @@ linkopts = [
     "-lssl", 
     "-lcrypto",
     "-lz",
-    "-llua5.3",  # 使用系统安装的Lua 5.3
+    "-llua5.1",  # 使用系统安装的Lua 5.1
     "-latomic",  # 添加原子操作库
 ]
 

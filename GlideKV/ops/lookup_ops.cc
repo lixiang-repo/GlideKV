@@ -177,7 +177,6 @@ REGISTER_OP("HashTableOfTensors")
     .Attr("namespace: string = 'test'")
     .Attr("set_name: string = 'vectors'")
     .Attr("field_name: string = 'vector'")
-    .Attr("tag: string = 'ydtx-lookup'")
     .SetIsStateful()
     .SetShapeFn(GlideKVHashTableOfTensorsShapeFn);
 
