@@ -14,6 +14,7 @@
 
 #include "data_loader.h"
 #include "version_utils.h"
+#include "tensorflow/core/platform/logging.h"
 
 /**
  * 基于 TBB 的线程安全 缓存实现

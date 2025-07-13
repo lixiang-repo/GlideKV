@@ -34,8 +34,8 @@ else
     echo "âœ“ TensorFlow Serving repository already exists"
 fi
 
-target_string="TF_RETURN_IF_ERROR(status);"
-sed -i "/$target_string/a \\
+target_string="Starting to read warmup data for model at"
+sed -i "/$target_string/i \\
   setenv(\"WARMUP_PATH\", warmup_path.c_str(), 1); \\
   " ${dirname}/serving/tensorflow_serving/servables/tensorflow/saved_model_warmup_util.cc
 
@@ -52,23 +52,9 @@ sed -i "/$target_string/i\\
   // 检查.done文件，如果不存在则等待 \\
   std::string done_file = path + \"/.done\"; \\
   if (!std::filesystem::exists(done_file)) { \\
-    LOG(WARNING) << \"Model directory missing .done file: \" << done_file << \", waiting for it...\"; \\
-    // 等待.done文件出现，最多等待5分钟 \\
-    int wait_count = 0; \\
-    const int max_wait_count = 60; // 5分钟 = 60 * 5秒 \\
-    while (!std::filesystem::exists(done_file) && wait_count < max_wait_count) { \\
-      std::this_thread::sleep_for(std::chrono::seconds(5)); \\
-      wait_count++; \\
-      if (wait_count % 12 == 0) { // 每分钟打印一次日志 \\
-        LOG(INFO) << \"Still waiting for .done file: \" << done_file << \" (waited \" << (wait_count * 5) << \" seconds)\"; \\
-      } \\
-    } \\
-    if (!std::filesystem::exists(done_file)) { \\
-      LOG(ERROR) << \"Timeout waiting for .done file: \" << done_file; \\
-      return tensorflow::errors::NotFound(\"Model not ready: timeout waiting for .done file in \", done_file); \\
-    } \\
-    LOG(INFO) << \"Found .done file, proceeding with model load: \" << done_file; \\
+    return tensorflow::errors::NotFound(\"Model not ready: timeout waiting for .done file in \", done_file); \\
   } \\
+  LOG(INFO) << \"Found .done file, proceeding with model load: \" << done_file; \\
   " ${dirname}/serving/tensorflow_serving/servables/tensorflow/saved_model_bundle_factory.cc
 
 tail -n +2 ${dirname}/serving/WORKSPACE >> ${dirname}/WORKSPACE

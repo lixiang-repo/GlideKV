@@ -6,7 +6,7 @@
 #include <sstream>
 #include <zlib.h>
 #include <tbb/concurrent_hash_map.h>
-
+#include "tensorflow/core/platform/logging.h"
 
 inline std::string file_pattern_replace(std::string str, std::string oldSubstr, std::string newSubstr) {
     size_t pos = 0;
